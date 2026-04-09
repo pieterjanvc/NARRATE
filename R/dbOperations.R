@@ -361,19 +361,26 @@ dbGetEvals <- function(
 #' @returns Prompt ID
 #' @export
 #'
-dbAddPrompt <- function(prompt, conn, note, commit = T, showWarning = T) {
+dbAddPrompt <- function(
+  prompt,
+  conn,
+  note,
+  task = NULL,
+  commit = T,
+  showWarning = T
+) {
   # Check if the prompt already exists
   prompt_hash <- hash(prompt)
-  promptID <- tbl(conn, "review_prompt") |>
+  promptID <- tbl(conn, "prompt") |>
     filter(hash == local(prompt_hash)) |>
     pull(id)
 
   # Add new prompt if needed
   if (length(promptID) == 0) {
-    parsed <- parsePrompt(prompt)
-    if (!parsed$success) {
-      stop(parsed$msg)
-    }
+    # parsed <- parsePrompt(prompt)
+    # if (!parsed$success) {
+    #   stop(parsed$msg)
+    # }
 
     toInsert <- data.frame(
       hash = prompt_hash,
@@ -384,7 +391,11 @@ dbAddPrompt <- function(prompt, conn, note, commit = T, showWarning = T) {
       toInsert$note = note
     }
 
-    promptID <- tbl_insert(toInsert, conn, "review_prompt", commit = commit) |>
+    if (!is.null(task)) {
+      toInsert$task = task
+    }
+
+    promptID <- tbl_insert(toInsert, conn, "prompt", commit = commit) |>
       pull(id)
   } else if (showWarning) {
     warning("The provided prompt already is in the database")
@@ -753,7 +764,7 @@ dbReviewerAI <- function(
 #' @param id (Optional) Review assignment ID. If not set, new entry is created
 #' @param reviewer_id (Required if id not set)
 #' @param evaluation_id (Required if id not set)
-#' @param review_prompt_id (Required if id not set)
+#' @param prompt_id (Required if id not set)
 #' @param include_questions (Optional value)
 #' @param redacted (Optional value)
 #' @param duration (Optional value)
@@ -771,7 +782,7 @@ dbReviewAssignment <- function(
   id,
   reviewer_id,
   evaluation_id,
-  review_prompt_id,
+  prompt_id,
   include_questions,
   redacted,
   duration,
@@ -802,24 +813,24 @@ dbReviewAssignment <- function(
     }
 
     # Check prompt
-    if (missing(review_prompt_id)) {
-      review_prompt_id <- tbl(conn, "review_prompt") |>
+    if (missing(prompt_id)) {
+      prompt_id <- tbl(conn, "prompt") |>
         filter(id == max(id)) |>
         pull(id)
-      if (length(review_prompt_id) == 0) {
+      if (length(prompt_id) == 0) {
         stop("You need to add at least one prompt before assigning reviews")
       }
     } else {
-      review_prompt_id <- tbl(conn, "review_prompt") |>
-        filter(id == local(review_prompt_id)) |>
+      prompt_id <- tbl(conn, "prompt") |>
+        filter(id == local(prompt_id)) |>
         pull(id)
 
-      if (length(review_prompt_id) == 0) {
-        stop("The provided review_prompt_id does not exist")
+      if (length(prompt_id) == 0) {
+        stop("The provided prompt_id does not exist")
       }
     }
 
-    data$review_prompt_id = review_prompt_id
+    data$prompt_id = prompt_id
 
     result <- tbl_insert(data, conn, "review_assignment", commit = commit)
   } else {

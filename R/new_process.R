@@ -173,3 +173,82 @@ comp_extraction_validate <- function(result, nComp = 8) {
 
   return(list(success = is.null(issues), issues = issues))
 }
+
+#' Submit a batch competency extraction job
+#'
+#' Builds and uploads a batch of competency extraction requests for a set of
+#' review assignments, creates the batch job, and records it in the database.
+#'
+#' @param conn Database connection
+#' @param review_ids Integer vector of review_assignment IDs to process
+#' @param prompt_id Integer ID of the prompt to use (from the prompt table)
+#' @param model Azure batch deployment name
+#' @param endpoint Azure endpoint base URL
+#' @param verbose Print progress messages (Default = FALSE)
+#'
+#' @returns Invisibly, the result of tbl_insert() for the new batch record
+#' @export
+llm_comp_extract_batch_submit <- function(
+  conn,
+  review_ids,
+  prompt_id,
+  model = "gpt-5.1-batch",
+  endpoint = "https://azure-ai.hms.edu",
+  verbose = F
+) {
+  # Get the evaluations for the given review IDs
+  review_info <- tbl(conn, "review_assignment") |>
+    filter(id %in% local(review_ids)) |>
+    select(review_id = id, evaluation_id) |>
+    collect()
+  review_info <- dbGetEvals(review_info$evaluation_id, conn) |>
+    select(evaluation_id, evaluation) |>
+    left_join(
+      review_info,
+      by = c("evaluation_id")
+    )
+
+  prompt <- tbl(conn, "prompt") |>
+    filter(id == prompt_id) |>
+    pull(prompt)
+
+  evaluation_texts <- setNames(
+    review_info$evaluation,
+    paste0("review-", review_info$review_id)
+  )
+
+  # Build the LLM API request
+  requests <- lapply(evaluation_texts, function(text) {
+    body <- list(
+      messages = list(
+        list(role = "system", content = prompt),
+        list(role = "user", content = text)
+      ),
+      response_format = list(type = "json_object")
+    )
+    body
+  })
+
+  if (verbose) {
+    message("Uploading ", length(requests), " requests...")
+  }
+
+  file_id <- llm_batch_upload(llm_batch_build_jsonl(requests, model), endpoint)
+
+  if (verbose) {
+    message("Creating batch job...")
+  }
+  batch_id <- llm_batch_create(file_id, endpoint)
+
+  # Update the request in the DB batch table
+  tbl_insert(
+    data.frame(
+      file_id = file_id,
+      batch_id = batch_id,
+      statusCode = 1,
+      n_requests = length(review_ids)
+    ),
+    conn,
+    "batch"
+  )
+}

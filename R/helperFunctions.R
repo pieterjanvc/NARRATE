@@ -129,7 +129,8 @@ getFunArgs <- function(exclude) {
 #' @param gitHubBranch CFME branch
 #' @param dev Deploy to dev app
 #'
-#' @import shiny DT bslib
+#' @import shiny bslib
+#' @importFrom DT DTOutput renderDT
 #' @importFrom tidyr pivot_wider
 #'
 #' @returns Nothing

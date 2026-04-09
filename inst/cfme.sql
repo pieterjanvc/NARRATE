@@ -72,11 +72,26 @@ CREATE TABLE "reviewer" (
   "note" TEXT
 );
 
-CREATE TABLE "review_prompt" (
+CREATE TABLE "prompt" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "task" TEXT,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   "hash" TEXT UNIQUE NOT NULL,
   "prompt" TEXT,
+  "note" TEXT
+);
+
+CREATE TABLE "batch" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "file_id" INTEGER NOT NULL,
+  "batch_id" INTEGER NOT NULL,
+  "created" TEXT DEFAULT (datetime('now', 'localtime')),
+  "checked" TEXT,
+  "finished" TEXT,
+  "statusCode" INTEGER NOT NULL,
+  "n_requests" INTEGER,
+  "tokens_in" INTEGER,
+  "tokens_out" INTEGER,
   "note" TEXT
 );
 
@@ -85,20 +100,22 @@ CREATE TABLE "review_assignment" (
   "created" TEXT DEFAULT (datetime('now', 'localtime')),
   "modified" TEXT DEFAULT (datetime('now', 'localtime')),
   "evaluation_id" INTEGER NOT NULL,
-  "review_prompt_id" INTEGER NOT NULL,
+  "prompt_id" INTEGER NOT NULL,
   "reviewer_id" INTEGER NOT NULL,
   "statusCode" INTEGER NOT NULL,
   "include_questions" INTEGER,
   "redacted" INTEGER,
   "utility" INTEGER,
   "sentiment" INTEGER,
+  "batch_id" INTEGER,
   "tokens_in" INTEGER,
   "tokens_out" INTEGER,
   "duration" REAL,
   "note" TEXT,
   FOREIGN KEY ("evaluation_id") REFERENCES "evaluation"("id") ON DELETE CASCADE,
-  FOREIGN KEY ("review_prompt_id") REFERENCES "review_prompt"("id") ON DELETE CASCADE,
-  FOREIGN KEY ("reviewer_id") REFERENCES "reviewer"("id") ON DELETE CASCADE
+  FOREIGN KEY ("prompt_id") REFERENCES "prompt"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("reviewer_id") REFERENCES "reviewer"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("batch_id") REFERENCES "batch"("id") ON DELETE CASCADE
 );
 
 CREATE TABLE "competency_score" (

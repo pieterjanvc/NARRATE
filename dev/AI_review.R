@@ -18,7 +18,7 @@ combined_data <- readxl::read_xlsx(
 . <- dbReviewerAI(conn, model = formals(llm_responses)$model)
 # Add default prompt
 prompt <- readLines("inst/rubricPrompt.md") |> paste(collapse = "\n")
-review_prompt_id <- dbAddPrompt(prompt, conn)
+prompt_id <- dbAddPrompt(prompt, conn)
 
 # Assign the same n random evals to each reviewer
 set.seed(seed)

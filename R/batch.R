@@ -80,45 +80,6 @@ llm_batch_create <- function(
   resp_body_json(resp)$id
 }
 
-#' Poll a batch job until it reaches a terminal state
-#'
-#' @param batch_id From llm_batch_create()
-#' @param poll_interval Seconds between polls (Azure recommends >= 60)
-#' @returns Final batch status object (list)
-llm_batch_wait <- function(
-  batch_id,
-  poll_interval = 60,
-  endpoint = "https://azure-ai.hms.edu",
-  api_key = Sys.getenv("HMS_AZURE_API")
-) {
-  terminal <- c("completed", "failed", "expired", "cancelled")
-
-  repeat {
-    resp <- request(paste0(endpoint, "/openai/v1/batches/", batch_id)) |>
-      req_headers("api-key" = api_key) |>
-      req_error(is_error = ~FALSE) |>
-      req_perform()
-
-    obj <- resp_body_json(resp)
-    status <- tolower(obj$status)
-    counts <- obj$request_counts
-
-    message(sprintf(
-      "[%s] %s — %s  (%s/%s completed)",
-      format(Sys.time(), "%H:%M:%S"),
-      batch_id,
-      status,
-      counts$completed %||% "?",
-      counts$total %||% "?"
-    ))
-
-    if (status %in% terminal) {
-      return(obj)
-    }
-    Sys.sleep(poll_interval)
-  }
-}
-
 #' Download and parse a batch output file
 #'
 #' @param file_id output_file_id from the completed batch status object
@@ -141,7 +102,7 @@ llm_batch_results <- function(
   lines <- strsplit(resp_body_string(resp), "\n")[[1]]
   lines <- lines[nzchar(trimws(lines))]
   rows <- lapply(lines, jsonlite::fromJSON, simplifyVector = FALSE)
-  setNames(rows, vapply(rows, `[[`, character(1), "custom_id"))
+  setNames(rows, vapply(rows, "[[", character(1), "custom_id"))
 }
 
 # Null-coalescing helper (base R doesn't have %||%)
@@ -249,4 +210,174 @@ llm_comp_extract_batch <- function(
     )
   }) |>
     setNames(names(evaluation_texts))
+}
+
+#' Poll a batch job until it reaches a terminal state
+#'
+#' @param batch_id Batch ID to check / process
+#'
+#' @importFrom stringr str_extract
+#' @returns Data frame with batch info
+llm_batch_status <- function(
+  batch_id,
+  conn,
+  check = T,
+  endpoint = "https://azure-ai.hms.edu",
+  api_key = Sys.getenv("HMS_AZURE_API")
+) {
+  batch_info <- tbl(conn, "batch") |> filter(id == local(batch_id)) |> collect()
+
+  if (batch_info$statusCode %in% c(3, -1, -2, -3) | !check) {
+    return(batch_info)
+  }
+
+  # https://developers.openai.com/api/docs/guides/batch#4-check-the-status-of-a-batch
+  status <- c(
+    "validating" = 2,
+    "in_progress" = 2,
+    "finalizing" = 2,
+    "completed" = 3,
+    "failed" = -1,
+    "expired" = -2,
+    "cancelling" = -3,
+    "cancelled" = -3
+  )
+
+  resp <- request(paste0(
+    endpoint,
+    "/openai/v1/batches/",
+    batch_info$batch_id
+  )) |>
+    req_headers("api-key" = api_key) |>
+    req_error(is_error = ~FALSE) |>
+    req_perform() |>
+    resp_body_json()
+
+  statusCode = as.integer(status[names(status) == resp$status])
+
+  batch_update <- data.frame(
+    id = batch_id,
+    checked = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+    statusCode = statusCode
+  )
+
+  if (statusCode == 3) {
+    raw <- llm_batch_results(resp$output_file_id)
+
+    results <- lapply(names(raw), function(id) {
+      r <- raw[[id]]
+      review_id <- str_extract(id, "\\d+$") |> as.integer()
+
+      if (is.null(r) || r$response$status_code != 200) {
+        return(list(
+          review_id = review_id,
+          statusCode = -1,
+          data = NULL,
+          tokens_in = NA,
+          tokens_out = NA
+        ))
+      }
+
+      rb <- r$response$body
+      raw_text <- rb$choices[[1]]$message$content
+      tokens_in <- rb$usage$prompt_tokens
+      tokens_out <- rb$usage$completion_tokens
+
+      parsed <- tryCatch(
+        jsonlite::fromJSON(raw_text, simplifyVector = FALSE),
+        error = function(e) NULL
+      )
+
+      if (is.null(parsed) || !("extractions" %in% names(parsed))) {
+        return(list(
+          review_id = review_id,
+          statusCode = -2,
+          data = NULL,
+          tokens_in = tokens_in,
+          tokens_out = tokens_out
+        ))
+      }
+
+      data <- parsed$extractions
+      for (i in seq_along(data)) {
+        data[[i]]$text <- unlist(data[[i]]$text)
+      }
+
+      list(
+        review_id = review_id,
+        statusCode = 2,
+        data = data,
+        tokens_in = tokens_in,
+        tokens_out = tokens_out
+      )
+    }) |>
+      setNames(names(raw))
+
+    success <- sapply(results, "[[", "statusCode") == 2
+
+    to_update <- lapply(
+      results,
+      "[",
+      c("review_id", "statusCode", "tokens_in", "tokens_out")
+    ) |>
+      bind_rows() |>
+      mutate(
+        statusCode = ifelse(statusCode == 2, 3, -1),
+        modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+      ) |>
+      rename(id = "review_id")
+
+    tbl_update(to_update, conn, "review_assignment", returnData = F, commit = F)
+
+    comp_data <- lapply(results, "[[", "data")
+    comp_data <- comp_data[sapply(comp_data, length) > 0]
+
+    to_insert <- data.frame(
+      review_assignment_id = rep(
+        as.integer(str_extract(names(comp_data), "\\d+$")),
+        lengths(comp_data)
+      ),
+      competency_id = unlist(
+        lapply(comp_data, sapply, "[[", "cID"),
+        use.names = F
+      )
+    )
+
+    comp_info <- tbl_insert(to_insert, conn, "competency_score", commit = F)
+
+    to_insert <- do.call(
+      rbind,
+      lapply(names(comp_data), function(nm) {
+        id <- as.integer(str_extract(nm, "\\d+$"))
+        do.call(
+          rbind,
+          lapply(comp_data[[nm]], function(item) {
+            data.frame(
+              review_assignment_id = id,
+              competency_id = item$cID,
+              text_match = item$text,
+              stringsAsFactors = FALSE
+            )
+          })
+        )
+      })
+    ) |>
+      left_join(
+        comp_info |>
+          select(competency_score_id = id, review_assignment_id, competency_id),
+        by = c("review_assignment_id", "competency_id")
+      ) |>
+      select(competency_score_id, text_match)
+
+    tbl_insert(to_insert, conn, "competency_text", returnData = F, commit = F)
+
+    batch_update <- batch_update |>
+      mutate(
+        finished = format(as.POSIXct(resp$completed_at), "%Y-%m-%d %H:%M:%S"),
+        tokens_in = resp$usage$input_tokens,
+        tokens_out = resp$usage$output_tokens
+      )
+  }
+
+  tbl_update(batch_update, conn, "batch", commit = T)
 }

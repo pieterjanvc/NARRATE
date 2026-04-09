@@ -9,7 +9,7 @@ dbReviewAssignment(
   id,
   reviewer_id,
   evaluation_id,
-  review_prompt_id,
+  prompt_id,
   include_questions,
   redacted,
   duration,
@@ -30,7 +30,7 @@ dbReviewAssignment(
 
 \item{evaluation_id}{(Required if id not set)}
 
-\item{review_prompt_id}{(Required if id not set)}
+\item{prompt_id}{(Required if id not set)}
 
 \item{include_questions}{(Optional value)}
 
