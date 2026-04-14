@@ -57,17 +57,17 @@ llm_batch_upload <- function(
 
 #' Submit a batch job
 #'
-#' @param file_id From llm_batch_upload()
+#' @param file_input_id From llm_batch_upload()
 #' @returns Batch ID string
 llm_batch_create <- function(
-  file_id,
+  file_input_id,
   endpoint = "https://azure-ai.hms.edu",
   api_key = Sys.getenv("HMS_AZURE_API")
 ) {
   resp <- request(paste0(endpoint, "/openai/v1/batches")) |>
     req_headers("api-key" = api_key, "Content-Type" = "application/json") |>
     req_body_json(list(
-      input_file_id = file_id,
+      input_file_id = file_input_id,
       endpoint = "/chat/completions",
       completion_window = "24h"
     )) |>
@@ -82,15 +82,20 @@ llm_batch_create <- function(
 
 #' Download and parse a batch output file
 #'
-#' @param file_id output_file_id from the completed batch status object
+#' @param file_output_id output_file_id from the completed batch status object
 #' @returns Named list keyed by custom_id; each element is the full parsed
 #'   response object (response$body, response$status_code, error)
 llm_batch_results <- function(
-  file_id,
+  file_output_id,
   endpoint = "https://azure-ai.hms.edu",
   api_key = Sys.getenv("HMS_AZURE_API")
 ) {
-  resp <- request(paste0(endpoint, "/openai/v1/files/", file_id, "/content")) |>
+  resp <- request(paste0(
+    endpoint,
+    "/openai/v1/files/",
+    file_output_id,
+    "/content"
+  )) |>
     req_headers("api-key" = api_key) |>
     req_error(is_error = ~FALSE) |>
     req_perform()
@@ -102,6 +107,9 @@ llm_batch_results <- function(
   lines <- strsplit(resp_body_string(resp), "\n")[[1]]
   lines <- lines[nzchar(trimws(lines))]
   rows <- lapply(lines, jsonlite::fromJSON, simplifyVector = FALSE)
+
+  rows[[1]]$body$messages[[2]]$content |> cat()
+
   setNames(rows, vapply(rows, "[[", character(1), "custom_id"))
 }
 
@@ -157,10 +165,13 @@ llm_comp_extract_batch <- function(
   })
 
   message("Uploading ", length(requests), " requests...")
-  file_id <- llm_batch_upload(llm_batch_build_jsonl(requests, model), endpoint)
+  file_input_id <- llm_batch_upload(
+    llm_batch_build_jsonl(requests, model),
+    endpoint
+  )
 
   message("Creating batch job...")
-  batch_id <- llm_batch_create(file_id, endpoint)
+  batch_id <- llm_batch_create(file_input_id, endpoint)
 
   final <- llm_batch_wait(batch_id, poll_interval, endpoint)
 
@@ -215,6 +226,8 @@ llm_comp_extract_batch <- function(
 #' Poll a batch job until it reaches a terminal state
 #'
 #' @param batch_id Batch ID to check / process
+#' @param conn DB connection
+#' @param check Use the API to check the status if not finished yet
 #'
 #' @importFrom stringr str_extract
 #' @returns Data frame with batch info
@@ -257,61 +270,87 @@ llm_batch_status <- function(
 
   batch_update <- data.frame(
     id = batch_id,
+    file_output_id = resp$output_file_id,
     checked = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
     statusCode = statusCode
   )
 
-  if (statusCode == 3) {
-    raw <- llm_batch_results(resp$output_file_id)
+  if (statusCode == 3 && !is.null(resp$completed_at)) {
+    batch_update$finished <- format(
+      as.POSIXct(resp$completed_at, origin = "1970-01-01"),
+      "%Y-%m-%d %H:%M:%S"
+    )
+  }
 
-    results <- lapply(names(raw), function(id) {
-      r <- raw[[id]]
-      review_id <- str_extract(id, "\\d+$") |> as.integer()
+  tbl_update(batch_update, conn, "batch", commit = T)
+}
 
-      if (is.null(r) || r$response$status_code != 200) {
-        return(list(
-          review_id = review_id,
-          statusCode = -1,
-          data = NULL,
-          tokens_in = NA,
-          tokens_out = NA
-        ))
-      }
+#' Pre-process batch API data for use in this project
+#'
+#' @param file_output_id Batch job output_file_id to process
+#'
+#' @importFrom stringr str_extract
+#' @returns Data frame with batch info
+batch_results_preprocess <- function(file_output_id) {
+  raw <- llm_batch_results(file_output_id)
 
-      rb <- r$response$body
-      raw_text <- rb$choices[[1]]$message$content
-      tokens_in <- rb$usage$prompt_tokens
-      tokens_out <- rb$usage$completion_tokens
+  lapply(names(raw), function(id) {
+    r <- raw[[id]]
+    review_id <- str_extract(id, "\\d+$") |> as.integer()
 
-      parsed <- tryCatch(
-        jsonlite::fromJSON(raw_text, simplifyVector = FALSE),
-        error = function(e) NULL
-      )
-
-      if (is.null(parsed) || !("extractions" %in% names(parsed))) {
-        return(list(
-          review_id = review_id,
-          statusCode = -2,
-          data = NULL,
-          tokens_in = tokens_in,
-          tokens_out = tokens_out
-        ))
-      }
-
-      data <- parsed$extractions
-      for (i in seq_along(data)) {
-        data[[i]]$text <- unlist(data[[i]]$text)
-      }
-
-      list(
+    if (is.null(r)) {
+      return(list(
         review_id = review_id,
-        statusCode = 2,
-        data = data,
+        statusCode = -1,
+        data = NULL,
+        tokens_in = NA,
+        tokens_out = NA
+      ))
+    }
+
+    rb <- r$response$body
+    raw_text <- rb$choices[[1]]$message$content
+    tokens_in <- rb$usage$prompt_tokens
+    tokens_out <- rb$usage$completion_tokens
+
+    parsed <- tryCatch(
+      jsonlite::fromJSON(raw_text, simplifyVector = FALSE),
+      error = function(e) NULL
+    )
+
+    if (is.null(parsed)) {
+      return(list(
+        review_id = review_id,
+        statusCode = -2,
+        data = NULL,
         tokens_in = tokens_in,
         tokens_out = tokens_out
-      )
-    }) |>
-      setNames(names(raw))
+      ))
+    }
+
+    list(
+      review_id = review_id,
+      statusCode = 2,
+      data = parsed,
+      tokens_in = tokens_in,
+      tokens_out = tokens_out
+    )
+  }) |>
+    setNames(names(raw))
+}
+
+#' Process batch extraction data
+#'
+#' @param batch_id Batch ID to process the competency extraction for
+#' @param conn DB connection
+#'
+#' @importFrom stringr str_extract
+#' @returns Data frame with batch info
+batch_extract_process <- function(batch_id, conn) {
+  batch_info <- llm_batch_status(batch_id, conn)
+
+  if (batch_info$statusCode == 3) {
+    results <- batch_results_preprocess(batch_info$file_output_id)
 
     success <- sapply(results, "[[", "statusCode") == 2
 
@@ -329,7 +368,7 @@ llm_batch_status <- function(
 
     tbl_update(to_update, conn, "review_assignment", returnData = F, commit = F)
 
-    comp_data <- lapply(results, "[[", "data")
+    comp_data <- lapply(results, "[[", c("data", "extractions"))
     comp_data <- comp_data[sapply(comp_data, length) > 0]
 
     to_insert <- data.frame(
@@ -355,7 +394,7 @@ llm_batch_status <- function(
             data.frame(
               review_assignment_id = id,
               competency_id = item$cID,
-              text_match = item$text,
+              text_match = unlist(item$text),
               stringsAsFactors = FALSE
             )
           })
@@ -371,13 +410,102 @@ llm_batch_status <- function(
 
     tbl_insert(to_insert, conn, "competency_text", returnData = F, commit = F)
 
-    batch_update <- batch_update |>
-      mutate(
-        finished = format(as.POSIXct(resp$completed_at), "%Y-%m-%d %H:%M:%S"),
-        tokens_in = resp$usage$input_tokens,
-        tokens_out = resp$usage$output_tokens
-      )
+    batch_update <- data.frame(
+      id = batch_id,
+      statusCode = 4,
+      tokens_in = sum(to_update$tokens_in, na.rm = TRUE),
+      tokens_out = sum(to_update$tokens_out, na.rm = TRUE)
+    )
+
+    batch_info <- tbl_update(batch_update, conn, "batch")
+  } else {
+    message("No results to process")
   }
 
-  tbl_update(batch_update, conn, "batch", commit = T)
+  batch_info
+}
+
+#' Process batch scoring data
+#'
+#' @param batch_id Batch ID to process the competency scoring for
+#' @param conn DB connection
+#'
+#' @importFrom stringr str_extract
+#' @returns Data frame with batch info
+#' @export
+batch_score_process <- function(batch_id, conn) {
+  batch_info <- llm_batch_status(batch_id, conn)
+
+  if (batch_info$statusCode == 3) {
+    results <- batch_results_preprocess(batch_info$file_output_id)
+
+    success <- sapply(results, "[[", "statusCode") == 2
+
+    # Build per-review update: statusCode, tokens, utility, sentiment
+    to_update <- lapply(results, function(r) {
+      row <- data.frame(
+        id = r$review_id,
+        statusCode = if (r$statusCode == 2) 5L else -1L,
+        tokens_in = r$tokens_in,
+        tokens_out = r$tokens_out,
+        utility = if (r$statusCode == 2) r$data$utility else NA_integer_,
+        sentiment = if (r$statusCode == 2) r$data$sentiment else NA_integer_,
+        modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+        stringsAsFactors = FALSE
+      )
+      row
+    }) |>
+      bind_rows()
+
+    tbl_update(to_update, conn, "review_assignment", returnData = F, commit = F)
+
+    # Update competency_score.specificity for each (review_assignment_id, competency_id)
+    score_results <- results[success]
+
+    if (length(score_results) > 0) {
+      review_ids <- sapply(score_results, "[[", "review_id")
+
+      existing_scores <- tbl(conn, "competency_score") |>
+        filter(review_assignment_id %in% local(review_ids)) |>
+        collect()
+
+      comp_updates <- do.call(
+        rbind,
+        lapply(score_results, function(r) {
+          comps <- r$data$competencies
+          if (is.null(comps) || length(comps) == 0) return(NULL)
+          data.frame(
+            review_assignment_id = r$review_id,
+            competency_id = sapply(comps, "[[", "cID"),
+            specificity = sapply(comps, "[[", "specificity"),
+            stringsAsFactors = FALSE
+          )
+        })
+      )
+
+      if (!is.null(comp_updates) && nrow(comp_updates) > 0) {
+        comp_updates <- comp_updates |>
+          left_join(
+            existing_scores |> select(id, review_assignment_id, competency_id),
+            by = c("review_assignment_id", "competency_id")
+          ) |>
+          select(id, specificity)
+
+        tbl_update(comp_updates, conn, "competency_score", returnData = F, commit = F)
+      }
+    }
+
+    batch_update <- data.frame(
+      id = batch_id,
+      statusCode = 4,
+      tokens_in = sum(to_update$tokens_in, na.rm = TRUE),
+      tokens_out = sum(to_update$tokens_out, na.rm = TRUE)
+    )
+
+    batch_info <- tbl_update(batch_update, conn, "batch")
+  } else {
+    message("No results to process")
+  }
+
+  batch_info
 }

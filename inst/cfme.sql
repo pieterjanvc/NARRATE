@@ -83,8 +83,10 @@ CREATE TABLE "prompt" (
 
 CREATE TABLE "batch" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "file_id" INTEGER NOT NULL,
-  "batch_id" INTEGER NOT NULL,
+  "file_input_id" TEXT,
+  "prompt_id" INTEGER,
+  "batch_id" TEXT,
+  "file_output_id" TEXT,  
   "created" TEXT DEFAULT (datetime('now', 'localtime')),
   "checked" TEXT,
   "finished" TEXT,
@@ -92,22 +94,24 @@ CREATE TABLE "batch" (
   "n_requests" INTEGER,
   "tokens_in" INTEGER,
   "tokens_out" INTEGER,
-  "note" TEXT
+  "note" TEXT,
+  FOREIGN KEY ("prompt_id") REFERENCES "prompt"("id") ON DELETE CASCADE
 );
 
 CREATE TABLE "review_assignment" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "created" TEXT DEFAULT (datetime('now', 'localtime')),
   "modified" TEXT DEFAULT (datetime('now', 'localtime')),
-  "evaluation_id" INTEGER NOT NULL,
-  "prompt_id" INTEGER NOT NULL,
+  "evaluation_id" INTEGER NOT NULL,  
   "reviewer_id" INTEGER NOT NULL,
   "statusCode" INTEGER NOT NULL,
   "include_questions" INTEGER,
   "redacted" INTEGER,
   "utility" INTEGER,
   "sentiment" INTEGER,
-  "batch_id" INTEGER,
+  "prompt_id" INTEGER,
+  "prompt_extract_id" INTEGER,
+  "prompt_score_id" INTEGER,
   "tokens_in" INTEGER,
   "tokens_out" INTEGER,
   "duration" REAL,
@@ -115,7 +119,16 @@ CREATE TABLE "review_assignment" (
   FOREIGN KEY ("evaluation_id") REFERENCES "evaluation"("id") ON DELETE CASCADE,
   FOREIGN KEY ("prompt_id") REFERENCES "prompt"("id") ON DELETE CASCADE,
   FOREIGN KEY ("reviewer_id") REFERENCES "reviewer"("id") ON DELETE CASCADE,
-  FOREIGN KEY ("batch_id") REFERENCES "batch"("id") ON DELETE CASCADE
+  FOREIGN KEY ("prompt_extract_id") REFERENCES "prompt"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("prompt_score_id") REFERENCES "prompt"("id") ON DELETE CASCADE
+);
+
+CREATE TABLE "batch_review" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "batch_id" INTEGER NOT NULL,
+  "review_assignment_id" INTEGER NOT NULL,  
+  FOREIGN KEY ("batch_id") REFERENCES "batch"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
 );
 
 CREATE TABLE "competency_score" (

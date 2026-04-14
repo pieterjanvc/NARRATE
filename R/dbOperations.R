@@ -764,7 +764,8 @@ dbReviewerAI <- function(
 #' @param id (Optional) Review assignment ID. If not set, new entry is created
 #' @param reviewer_id (Required if id not set)
 #' @param evaluation_id (Required if id not set)
-#' @param prompt_id (Required if id not set)
+#' @param prompt_extract_id (Required if id not set)
+#' @param prompt_score_id (Required if id not set)
 #' @param include_questions (Optional value)
 #' @param redacted (Optional value)
 #' @param duration (Optional value)
@@ -783,6 +784,8 @@ dbReviewAssignment <- function(
   reviewer_id,
   evaluation_id,
   prompt_id,
+  prompt_extract_id,
+  prompt_score_id,
   include_questions,
   redacted,
   duration,
@@ -812,25 +815,53 @@ dbReviewAssignment <- function(
       }
     }
 
-    # Check prompt
-    if (missing(prompt_id)) {
-      prompt_id <- tbl(conn, "prompt") |>
-        filter(id == max(id)) |>
-        pull(id)
-      if (length(prompt_id) == 0) {
-        stop("You need to add at least one prompt before assigning reviews")
-      }
-    } else {
-      prompt_id <- tbl(conn, "prompt") |>
-        filter(id == local(prompt_id)) |>
-        pull(id)
+    human <- tbl(conn, "reviewer") |>
+      filter(id == local(reviewer_id)) |>
+      pull(human) ==
+      1
 
-      if (length(prompt_id) == 0) {
-        stop("The provided prompt_id does not exist")
-      }
+    if (human) {
+      prompt_ids <- prompt_id
+    } else {
+      prompt_ids <- c(
+        ifelse(
+          missing(prompt_extract_id),
+          NA,
+          prompt_extract_id
+        ),
+        ifelse(missing(prompt_score_id), NA, prompt_score_id)
+      )
     }
 
-    data$prompt_id = prompt_id
+    ids <- mapply(
+      function(prompt_id, task) {
+        # Check prompt
+        if (is.na(prompt_id)) {
+          prompt_id <- tbl(conn, "prompt") |>
+            filter(task == local(task)) |>
+            filter(id == max(id)) |>
+            pull(id)
+          if (length(prompt_id) == 0) {
+            stop("You need to add at least one prompt for ", task)
+          }
+        } else {
+          prompt_id <- tbl(conn, "prompt") |>
+            filter(id == local(prompt_id), task == local(task)) |>
+            pull(id)
+
+          if (length(prompt_id) == 0) {
+            stop("The provided prompt_id does not exist for ", task)
+          }
+        }
+
+        prompt_id
+      },
+      prompt_id = prompt_ids,
+      task = c("comp_extract", "comp_score")
+    )
+
+    data$prompt_extract_id = ids[1]
+    data$prompt_score_id = ids[2]
 
     result <- tbl_insert(data, conn, "review_assignment", commit = commit)
   } else {

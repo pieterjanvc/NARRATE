@@ -14,6 +14,10 @@ llm_batch_status(
 }
 \arguments{
 \item{batch_id}{Batch ID to check / process}
+
+\item{conn}{DB connection}
+
+\item{check}{Use the API to check the status if not finished yet}
 }
 \value{
 Data frame with batch info

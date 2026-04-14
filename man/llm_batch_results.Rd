@@ -5,13 +5,13 @@
 \title{Download and parse a batch output file}
 \usage{
 llm_batch_results(
-  file_id,
+  file_output_id,
   endpoint = "https://azure-ai.hms.edu",
   api_key = Sys.getenv("HMS_AZURE_API")
 )
 }
 \arguments{
-\item{file_id}{output_file_id from the completed batch status object}
+\item{file_output_id}{output_file_id from the completed batch status object}
 }
 \value{
 Named list keyed by custom_id; each element is the full parsed

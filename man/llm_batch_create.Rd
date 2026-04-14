@@ -5,13 +5,13 @@
 \title{Submit a batch job}
 \usage{
 llm_batch_create(
-  file_id,
+  file_input_id,
   endpoint = "https://azure-ai.hms.edu",
   api_key = Sys.getenv("HMS_AZURE_API")
 )
 }
 \arguments{
-\item{file_id}{From llm_batch_upload()}
+\item{file_input_id}{From llm_batch_upload()}
 }
 \value{
 Batch ID string

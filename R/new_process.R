@@ -184,23 +184,53 @@ comp_extraction_validate <- function(result, nComp = 8) {
 #' @param prompt_id Integer ID of the prompt to use (from the prompt table)
 #' @param model Azure batch deployment name
 #' @param endpoint Azure endpoint base URL
+#' @param api_key The api key to use if not set in env
 #' @param verbose Print progress messages (Default = FALSE)
+#' @param force If TRUE, resubmit even if already in-progress or completed (Default = FALSE)
 #'
 #' @returns Invisibly, the result of tbl_insert() for the new batch record
 #' @export
 llm_comp_extract_batch_submit <- function(
   conn,
   review_ids,
-  prompt_id,
   model = "gpt-5.1-batch",
   endpoint = "https://azure-ai.hms.edu",
-  verbose = F
+  api_key = Sys.getenv("HMS_AZURE_API"),
+  verbose = F,
+  force = F
 ) {
-  # Get the evaluations for the given review IDs
+  # Get the evaluations + extract prompt for the given review IDs
   review_info <- tbl(conn, "review_assignment") |>
     filter(id %in% local(review_ids)) |>
-    select(review_id = id, evaluation_id) |>
+    select(review_id = id, statusCode, evaluation_id, prompt_extract_id) |>
+    left_join(
+      tbl(conn, "prompt") |> select(prompt_extract_id = id, prompt),
+      by = "prompt_extract_id"
+    ) |>
     collect()
+
+  if (!force) {
+    if (nrow(review_info |> filter(statusCode == 0)) == 0) {
+      warning(
+        "No new review assignments to submit (statusCode == 0). Use force = TRUE to resubmit."
+      )
+      return(NULL)
+    }
+
+    not_new <- review_info$review_id[review_info$statusCode != 0]
+    if (length(not_new) > 0) {
+      warning(
+        length(not_new),
+        " review_assignment(s) skipped — already submitted or processed ",
+        "(statusCode != 0): ",
+        paste(not_new, collapse = ", ")
+      )
+      review_info <- review_info |> filter(statusCode == 0)
+    }
+  }
+
+  review_info <- review_info |> select(-statusCode)
+
   review_info <- dbGetEvals(review_info$evaluation_id, conn) |>
     select(evaluation_id, evaluation) |>
     left_join(
@@ -208,47 +238,220 @@ llm_comp_extract_batch_submit <- function(
       by = c("evaluation_id")
     )
 
-  prompt <- tbl(conn, "prompt") |>
-    filter(id == prompt_id) |>
-    pull(prompt)
-
-  evaluation_texts <- setNames(
-    review_info$evaluation,
-    paste0("review-", review_info$review_id)
-  )
+  review_info$name <- paste0("review-", review_info$review_id)
 
   # Build the LLM API request
-  requests <- lapply(evaluation_texts, function(text) {
+  requests <- apply(review_info, 1, function(x) {
     body <- list(
       messages = list(
-        list(role = "system", content = prompt),
-        list(role = "user", content = text)
+        list(role = "system", content = x["prompt"]),
+        list(role = "user", content = x["evaluation"])
       ),
       response_format = list(type = "json_object")
     )
     body
-  })
+  }) |>
+    setNames(review_info$name)
 
   if (verbose) {
     message("Uploading ", length(requests), " requests...")
   }
 
-  file_id <- llm_batch_upload(llm_batch_build_jsonl(requests, model), endpoint)
+  file_input_id <- llm_batch_upload(
+    llm_batch_build_jsonl(requests, model),
+    endpoint
+  )
 
   if (verbose) {
     message("Creating batch job...")
   }
-  batch_id <- llm_batch_create(file_id, endpoint)
+  batch_id <- llm_batch_create(file_input_id, endpoint)
 
   # Update the request in the DB batch table
-  tbl_insert(
+  batch_info <- tbl_insert(
     data.frame(
-      file_id = file_id,
+      file_input_id = file_input_id,
       batch_id = batch_id,
       statusCode = 1,
-      n_requests = length(review_ids)
+      n_requests = nrow(review_info)
     ),
     conn,
     "batch"
   )
+
+  submitted_ids <- review_info$review_id
+
+  # Link review assignments to this batch
+  tbl_insert(
+    data.frame(
+      batch_id = batch_info$id,
+      review_assignment_id = submitted_ids
+    ),
+    conn,
+    "batch_review",
+    returnData = F
+  )
+
+  # Mark submitted review assignments as in-progress
+  tbl_update(
+    data.frame(
+      id = submitted_ids,
+      statusCode = 1,
+      modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+    ),
+    conn,
+    "review_assignment",
+    returnData = F,
+    commit = T
+  )
+
+  batch_info
+}
+
+#' Submit a batch competency scoring job
+#'
+#' Builds and uploads a batch of competency scoring requests for a set of
+#' review assignments, creates the batch job, and records it in the database.
+#'
+#' @param conn Database connection
+#' @param review_ids Integer vector of review_assignment IDs to process
+#' @param model Azure batch deployment name
+#' @param endpoint Azure endpoint base URL
+#' @param verbose Print progress messages (Default = FALSE)
+#' @param force If TRUE, resubmit even if already in-progress or completed (Default = FALSE)
+#'
+#' @returns Invisibly, the result of tbl_insert() for the new batch record
+#' @export
+llm_comp_score_batch_submit <- function(
+  conn,
+  review_ids,
+  model = "gpt-5.1-batch",
+  endpoint = "https://azure-ai.hms.edu",
+  verbose = F,
+  force = F
+) {
+  # Get score prompt per review assignment, checking extraction is complete
+  review_info <- tbl(conn, "review_assignment") |>
+    filter(id %in% local(review_ids)) |>
+    select(review_id = id, statusCode, prompt_score_id) |>
+    left_join(
+      tbl(conn, "prompt") |> select(prompt_score_id = id, prompt),
+      by = "prompt_score_id"
+    ) |>
+    collect()
+
+  if (!force) {
+    if (nrow(review_info |> filter(statusCode == 3)) == 0) {
+      warning(
+        "There are no review assignments with these IDs to score (statusCode == 3). ",
+        "Run batch_extract_process() first, or use force = TRUE to resubmit."
+      )
+      return(NULL)
+    }
+
+    not_ready <- review_info$review_id[review_info$statusCode != 3]
+    if (length(not_ready) > 0) {
+      warning(
+        length(not_ready),
+        " review_assignment(s) skipped — extraction not complete or already scored ",
+        "(statusCode != 3): ",
+        paste(not_ready, collapse = ", ")
+      )
+
+      review_info <- review_info |> filter(statusCode == 3)
+    }
+  }
+
+  review_info <- review_info |> select(-statusCode)
+
+  # Fetch extracted competency texts for the given review assignments
+  ready_ids <- review_info$review_id
+  extractions <- tbl(conn, "competency_score") |>
+    filter(review_assignment_id %in% local(ready_ids)) |>
+    select(review_assignment_id, competency_id, competency_score_id = id) |>
+    left_join(
+      tbl(conn, "competency_text") |> select(competency_score_id, text_match),
+      by = "competency_score_id"
+    ) |>
+    collect()
+
+  # Build the LLM API requests
+  requests <- setNames(
+    lapply(review_info$review_id, function(rid) {
+      rows <- extractions[extractions$review_assignment_id == rid, ]
+      comps <- lapply(
+        split(rows, rows$competency_id),
+        function(g) {
+          list(
+            cID = g$competency_id[[1]],
+            text = as.list(g$text_match)
+          )
+        }
+      )
+      user_msg <- toJSON(
+        list(extractions = unname(comps)),
+        auto_unbox = TRUE
+      )
+      prompt <- review_info$prompt[review_info$review_id == rid]
+      list(
+        messages = list(
+          list(role = "system", content = prompt),
+          list(role = "user", content = user_msg)
+        ),
+        response_format = list(type = "json_object")
+      )
+    }),
+    paste0("review-", review_info$review_id)
+  )
+
+  if (verbose) {
+    message("Uploading ", length(requests), " requests...")
+  }
+
+  file_input_id <- llm_batch_upload(
+    llm_batch_build_jsonl(requests, model),
+    endpoint
+  )
+
+  if (verbose) {
+    message("Creating batch job...")
+  }
+  batch_id <- llm_batch_create(file_input_id, endpoint)
+
+  batch_info <- tbl_insert(
+    data.frame(
+      file_input_id = file_input_id,
+      batch_id = batch_id,
+      statusCode = 1,
+      n_requests = nrow(review_info)
+    ),
+    conn,
+    "batch"
+  )
+
+  # Link review assignments to this batch
+  tbl_insert(
+    data.frame(
+      batch_id = batch_info$id,
+      review_assignment_id = ready_ids
+    ),
+    conn,
+    "batch_review",
+    returnData = F
+  )
+
+  # Mark submitted review assignments as scoring in-progress
+  tbl_update(
+    data.frame(
+      id = ready_ids,
+      statusCode = 4,
+      modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+    ),
+    conn,
+    "review_assignment",
+    returnData = F,
+    commit = T
+  )
+
+  batch_info
 }

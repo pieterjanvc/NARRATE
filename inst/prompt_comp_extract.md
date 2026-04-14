@@ -1,9 +1,9 @@
 # TASK
 
-Analyze the clinical clerkship evaluation of medical students below and identify
-which of the 8 competencies are explicitly addressed. For each one found,
-extract the verbatim text that justifies its inclusion. Make sure to include
-illustrating examples are these will be important later.
+Analyze the clinical clerkship evaluation of a medical student below and
+identify which of the 8 competencies are explicitly addressed. For each one
+found, extract the verbatim text that justifies its inclusion. Make sure to
+include illustrating examples are these will be important later.
 
 # RULES
 
@@ -13,9 +13,8 @@ illustrating examples are these will be important later.
    constitute evidence for any specific competency. When in doubt, leave it out.
 
 2. **Verbatim only**: Copy the exact text from the evaluation. Do not
-   paraphrase, summarize, or combine sentences. Use the shortest continuous span
-   that makes the attribution unambiguous. Multiple spans across the text can be
-   used if relevant. Don't forget to include all illustrating examples.
+   paraphrase, summarize, or combine sentences. Multiple spans across the text
+   can be used if relevant. Don't forget to include all illustrating examples.
 
 3. **One competency per quote**: Assign each piece of text to maximum one
    competency — i.e. the most specific match. Do not repeat the same text under
