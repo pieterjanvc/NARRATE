@@ -77,3 +77,21 @@ llm_batch_status(batch2_submit$id, conn)
 batch2_result <- batch_score_process(batch2_submit$id, conn)
 
 tbl(conn, "review_assignment") |> filter(statusCode == 4)
+
+# --- test single synchonous
+
+assignments <- dbReviewAssignment(
+  conn,
+  reviewer_id = 1,
+  evaluation_id = 15,
+  redacted = T,
+  include_questions = T
+)
+
+test <- llm_comp_extract_run(
+  conn,
+  review_ids = 4,
+  model = "gpt-5.1",
+  force = T
+)
+test <- llm_comp_score_run(conn, review_ids = 4, model = "gpt-5.1")
