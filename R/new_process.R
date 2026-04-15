@@ -19,7 +19,7 @@ library(dplyr)
 llm_comp_extract <- function(
   evaluation_text,
   prompt,
-  model = "gpt-5-mini",
+  model = "gpt-5.1",
   endpoint = "https://azure-ai.hms.edu",
   version = "2024-10-21",
   debug = F
@@ -32,7 +32,7 @@ llm_comp_extract <- function(
   )
 
   # gpt-4o uses max_tokens + supports temperature;
-  # gpt-5-mini uses max_completion_tokens and does not accept temperature
+  # gpt-5.1 uses max_completion_tokens and does not accept temperature
   is_gpt4o <- grepl("gpt-4o", model)
   token_param <- if (is_gpt4o) "max_tokens" else "max_completion_tokens"
 
@@ -46,9 +46,9 @@ llm_comp_extract <- function(
     ),
     if (is_gpt4o) list(temperature = 0) else list(),
     # gpt-4o: 800 output tokens is sufficient
-    # gpt-5-mini: reasoning model — tokens cover internal thinking + output,
+    # gpt-5.1: reasoning model — tokens cover internal thinking + output,
     # so budget must be large enough for both; 4000 leaves ~3200 for actual output
-    setNames(list(if (is_gpt4o) 800L else 4000L), token_param)
+    setNames(list(if (is_gpt4o) 800L else 10000L), token_param)
   )
 
   req <- request(baseURL) |>
@@ -159,9 +159,11 @@ llm_comp_score <- function(
   token_param <- if (is_gpt4o) "max_tokens" else "max_completion_tokens"
 
   user_msg <- toJSON(
-    list(extractions = lapply(extractions, function(item) {
-      list(cID = item$cID, text = as.list(item$text))
-    })),
+    list(
+      extractions = lapply(extractions, function(item) {
+        list(cID = item$cID, text = as.list(item$text))
+      })
+    ),
     auto_unbox = TRUE
   )
 
@@ -208,7 +210,7 @@ llm_comp_score <- function(
 
   if (
     is.null(parsed) ||
-    !all(c("competencies", "utility", "sentiment") %in% names(parsed))
+      !all(c("competencies", "utility", "sentiment") %in% names(parsed))
   ) {
     return(list(
       statusCode = 1,
@@ -437,7 +439,7 @@ llm_comp_extract_batch_submit <- function(
 llm_comp_extract_run <- function(
   conn,
   review_ids,
-  model = "gpt-5-mini",
+  model = "gpt-5.1",
   endpoint = "https://azure-ai.hms.edu",
   verbose = F,
   force = F
@@ -740,7 +742,9 @@ llm_comp_score_run <- function(
 
   results <- lapply(seq_len(nrow(review_info)), function(i) {
     rid <- review_info$review_id[i]
-    if (verbose) message("Scoring review ", rid, "...")
+    if (verbose) {
+      message("Scoring review ", rid, "...")
+    }
 
     rows <- extractions[extractions$review_assignment_id == rid, ]
     extr <- lapply(
@@ -776,7 +780,13 @@ llm_comp_score_run <- function(
           ) |>
           select(id, specificity)
 
-        tbl_update(comp_updates, conn, "competency_score", returnData = F, commit = F)
+        tbl_update(
+          comp_updates,
+          conn,
+          "competency_score",
+          returnData = F,
+          commit = F
+        )
       }
     }
 
@@ -786,8 +796,16 @@ llm_comp_score_run <- function(
         statusCode = new_status,
         tokens_in = result$tokens_in,
         tokens_out = result$tokens_out,
-        utility = if (result$statusCode == 2) result$data$utility else NA_integer_,
-        sentiment = if (result$statusCode == 2) result$data$sentiment else NA_integer_,
+        utility = if (result$statusCode == 2) {
+          result$data$utility
+        } else {
+          NA_integer_
+        },
+        sentiment = if (result$statusCode == 2) {
+          result$data$sentiment
+        } else {
+          NA_integer_
+        },
         modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
       ),
       conn,

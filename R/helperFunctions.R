@@ -130,7 +130,7 @@ getFunArgs <- function(exclude) {
 #' @param dev Deploy to dev app
 #'
 #' @import shiny bslib
-#' @importFrom DT DTOutput renderDT
+#' @importFrom DT DTOutput renderDT datatable
 #' @importFrom tidyr pivot_wider
 #'
 #' @returns Nothing

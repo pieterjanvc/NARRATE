@@ -240,7 +240,7 @@ llm_batch_status <- function(
 ) {
   batch_info <- tbl(conn, "batch") |> filter(id == local(batch_id)) |> collect()
 
-  if (batch_info$statusCode %in% c(3, -1, -2, -3) | !check) {
+  if (!batch_info$statusCode %in% c(1, 2) | !check) {
     return(batch_info)
   }
 
@@ -473,7 +473,9 @@ batch_score_process <- function(batch_id, conn) {
         rbind,
         lapply(score_results, function(r) {
           comps <- r$data$competencies
-          if (is.null(comps) || length(comps) == 0) return(NULL)
+          if (is.null(comps) || length(comps) == 0) {
+            return(NULL)
+          }
           data.frame(
             review_assignment_id = r$review_id,
             competency_id = sapply(comps, "[[", "cID"),
@@ -491,7 +493,13 @@ batch_score_process <- function(batch_id, conn) {
           ) |>
           select(id, specificity)
 
-        tbl_update(comp_updates, conn, "competency_score", returnData = F, commit = F)
+        tbl_update(
+          comp_updates,
+          conn,
+          "competency_score",
+          returnData = F,
+          commit = F
+        )
       }
     }
 

@@ -4,12 +4,12 @@ seed <- 20260414
 db_path <- "local/new_process.db"
 dbSetup(db_path, "inst/cfme.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
+conn <- dbGetConn(db_path)
 
 # SETUP
 # *****
 
 # Add all data
-conn <- dbGetConn(db_path)
 combined_data <- readxl::read_xlsx(
   "local/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx"
 )
@@ -65,6 +65,15 @@ test <- batch_results_preprocess(
 )
 
 # --------
+
+assingments <- dbReviewAssignment(
+  conn,
+  reviewer_id = 1,
+  evaluation_id = 21:30,
+  redacted = T,
+  include_questions = T
+)
+
 review_ids <- tbl(conn, "review_assignment") |>
   filter(statusCode == 0) |>
   pull(id)
@@ -83,15 +92,18 @@ tbl(conn, "review_assignment") |> filter(statusCode == 4)
 assignments <- dbReviewAssignment(
   conn,
   reviewer_id = 1,
-  evaluation_id = 15,
+  evaluation_id = 28,
   redacted = T,
   include_questions = T
 )
 
+tbl(conn, "review_assignment") |> filter(statusCode < 3)
+
+review_ids <- 37
 test <- llm_comp_extract_run(
   conn,
-  review_ids = 4,
+  review_ids = review_ids,
   model = "gpt-5.1",
   force = T
 )
-test <- llm_comp_score_run(conn, review_ids = 4, model = "gpt-5.1")
+test <- llm_comp_score_run(conn, review_ids = review_ids, model = "gpt-5.1")

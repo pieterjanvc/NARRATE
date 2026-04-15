@@ -1,9 +1,7 @@
 # TASK
 
 Analyze the clinical clerkship evaluation of a medical student below and
-identify which of the 8 competencies are explicitly addressed. For each one
-found, extract the verbatim text that justifies its inclusion. Make sure to
-include illustrating examples are these will be important later.
+identify which of the 8 competencies are explicitly addressed.
 
 # RULES
 
@@ -12,13 +10,14 @@ include illustrating examples are these will be important later.
    — "great attitude", "hard worker", "pleasure to work with" — do not
    constitute evidence for any specific competency. When in doubt, leave it out.
 
-2. **Verbatim only**: Copy the exact text from the evaluation. Do not
-   paraphrase, summarize, or combine sentences. Multiple spans across the text
-   can be used if relevant. Don't forget to include all illustrating examples.
-
-3. **One competency per quote**: Assign each piece of text to maximum one
+2. **One competency per quote**: Assign each piece of text to maximum one
    competency — i.e. the most specific match. Do not repeat the same text under
-   two competencies.
+   two competencies. See the disambiguation section below for details.
+
+3. **Verbatim only**: Copy the exact text from the evaluation. Do not
+   paraphrase, summarize, or combine sentences. Multiple spans across the text
+   can be used if relevant. Include all illustrating examples (as long as they
+   don't belong to another competency)
 
 4. **Missing is normal**: Most clerkship evaluations might only explicitly
    address 2–4 competencies. Do not force a match to reach a higher number.
@@ -29,7 +28,8 @@ include illustrating examples are these will be important later.
 
 # DISAMBIGUATION
 
-When text could fit more than one competency, apply these rules:
+When text could fit more than one competency, apply these rules to assign it to
+a single one:
 
 - **Comp 3 vs. 5**: Comp 3 = quality and format of clinical documentation and
   formal oral presentations (notes, H&Ps, SOAP notes, rounds presentations).
@@ -109,3 +109,7 @@ Return valid JSON only — no markdown, no explanation. Use this exact structure
 {"extractions": [{"cID": 1, "text": ["verbatim span 1", "verbatim span 2"]}]}
 
 Only include competencies that were found. An empty extractions array is valid.
+
+Before returning, scan your output: if any string appears under more than one
+cID, remove it from all but the single most specific match. Remove competencies
+as needed if they no longer have supporting text evidence.
