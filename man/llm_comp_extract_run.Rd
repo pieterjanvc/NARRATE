@@ -7,7 +7,7 @@
 llm_comp_extract_run(
   conn,
   review_ids,
-  model = "gpt-5-mini",
+  model = "gpt-5.1",
   endpoint = "https://azure-ai.hms.edu",
   verbose = F,
   force = F

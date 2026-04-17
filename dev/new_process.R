@@ -29,7 +29,7 @@ evalSample <-
   select(id, summary_flg, complete) |>
   group_by(summary_flg, complete) |>
   collect() |>
-  slice_sample(n = 1) |>
+  slice_sample(n = 3) |>
   pull(id)
 
 assingments <- dbReviewAssignment(
@@ -69,23 +69,28 @@ test <- batch_results_preprocess(
 assingments <- dbReviewAssignment(
   conn,
   reviewer_id = 1,
-  evaluation_id = 21:30,
+  evaluation_id = 28:29,
   redacted = T,
   include_questions = T
 )
 
 review_ids <- tbl(conn, "review_assignment") |>
-  filter(statusCode == 0) |>
+  filter(statusCode < 4) |>
   pull(id)
 
-batch1_submit <- llm_comp_extract_batch_submit(conn, review_ids)
-llm_batch_status(batch1_submit$id, conn)
-batch1_result <- batch_extract_process(batch1_submit$id, conn)
-batch2_submit <- llm_comp_score_batch_submit(conn, review_ids)
-llm_batch_status(batch2_submit$id, conn)
-batch2_result <- batch_score_process(batch2_submit$id, conn)
+tbl(conn, "batch") |> filter(statusCode < 4)
 
-tbl(conn, "review_assignment") |> filter(statusCode == 4)
+batch_submit <- list(id = 1)
+
+batch_submit <- llm_comp_extract_batch_submit(conn, review_ids)
+llm_batch_status(batch1_submit$id, conn)
+# bg_check <- batch_status_notify(batch_id = batch_submit$id, db_path = db_path)
+batch1_result <- batch_extract_process(batch_submit$id, conn)
+batch_submit <- llm_comp_score_batch_submit(conn, review_ids)
+llm_batch_status(batch_submit$id, conn)
+batch2_result <- batch_score_process(batch_submit$id, conn)
+
+tbl(conn, "review_assignment") |> filter(statusCode == 5)
 
 # --- test single synchonous
 
@@ -99,11 +104,18 @@ assignments <- dbReviewAssignment(
 
 tbl(conn, "review_assignment") |> filter(statusCode < 3)
 
-review_ids <- 37
+review_ids <- 10
 test <- llm_comp_extract_run(
   conn,
   review_ids = review_ids,
   model = "gpt-5.1",
   force = T
 )
-test <- llm_comp_score_run(conn, review_ids = review_ids, model = "gpt-5.1")
+test <- llm_comp_score_run(
+  conn,
+  review_ids = review_ids,
+  model = "gpt-5.1",
+  force = T
+)
+
+dbGetEvals(28, conn)$evaluation |> cat()

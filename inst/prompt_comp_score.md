@@ -73,7 +73,7 @@ supporting text evidence as provided by the evaluator.
   qualifiers (nice, great, amazing, terrible, wonderful, …)
 - 2: Non-specific evidence is given without clear examples to support it
 - 3: At least one specific example supports the competency
-- 4: Multiple or detailed examples providing exceptional detail and support
+- 4: Multiple or one very detailed example providing exceptional support
 
 **guiding examples**
 

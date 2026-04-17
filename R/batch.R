@@ -14,7 +14,7 @@ llm_batch_build_jsonl <- function(requests, model) {
         list(
           custom_id = id,
           method = "POST",
-          url = "/v1/chat/completions",
+          url = "/v1/responses",
           body = body
         ),
         auto_unbox = TRUE
@@ -68,7 +68,7 @@ llm_batch_create <- function(
     req_headers("api-key" = api_key, "Content-Type" = "application/json") |>
     req_body_json(list(
       input_file_id = file_input_id,
-      endpoint = "/chat/completions",
+      endpoint = "/responses",
       completion_window = "24h"
     )) |>
     req_error(is_error = ~FALSE) |>
@@ -108,8 +108,6 @@ llm_batch_results <- function(
   lines <- lines[nzchar(trimws(lines))]
   rows <- lapply(lines, jsonlite::fromJSON, simplifyVector = FALSE)
 
-  rows[[1]]$body$messages[[2]]$content |> cat()
-
   setNames(rows, vapply(rows, "[[", character(1), "custom_id"))
 }
 
@@ -145,23 +143,13 @@ llm_comp_extract_batch <- function(
     names(evaluation_texts) <- paste0("eval-", seq_along(evaluation_texts))
   }
 
-  is_gpt4o <- grepl("gpt-4o", model)
-  token_param <- if (is_gpt4o) "max_tokens" else "max_completion_tokens"
-  token_limit <- if (is_gpt4o) 800L else 4000L
-
   requests <- lapply(evaluation_texts, function(text) {
-    body <- list(
-      messages = list(
-        list(role = "system", content = prompt),
-        list(role = "user", content = text)
-      ),
-      response_format = list(type = "json_object")
+    list(
+      instructions = prompt,
+      input = paste0(text, "\n\nRespond with JSON as instructed."),
+      text = list(format = list(type = "json_object")),
+      max_output_tokens = 10000L
     )
-    if (is_gpt4o) {
-      body$temperature <- 0
-    }
-    body[[token_param]] <- token_limit
-    body
   })
 
   message("Uploading ", length(requests), " requests...")
@@ -190,9 +178,9 @@ llm_comp_extract_batch <- function(
     }
 
     rb <- r$response$body
-    raw_text <- rb$choices[[1]]$message$content
-    tokens_in <- rb$usage$prompt_tokens
-    tokens_out <- rb$usage$completion_tokens
+    raw_text <- rb$output[[1]]$content[[1]]$text
+    tokens_in <- rb$usage$input_tokens
+    tokens_out <- rb$usage$output_tokens
 
     parsed <- tryCatch(
       jsonlite::fromJSON(raw_text, simplifyVector = FALSE),
@@ -231,6 +219,7 @@ llm_comp_extract_batch <- function(
 #'
 #' @importFrom stringr str_extract
 #' @returns Data frame with batch info
+#' @export
 llm_batch_status <- function(
   batch_id,
   conn,
@@ -309,9 +298,9 @@ batch_results_preprocess <- function(file_output_id) {
     }
 
     rb <- r$response$body
-    raw_text <- rb$choices[[1]]$message$content
-    tokens_in <- rb$usage$prompt_tokens
-    tokens_out <- rb$usage$completion_tokens
+    raw_text <- rb$output[[1]]$content[[1]]$text
+    tokens_in <- rb$usage$input_tokens
+    tokens_out <- rb$usage$output_tokens
 
     parsed <- tryCatch(
       jsonlite::fromJSON(raw_text, simplifyVector = FALSE),

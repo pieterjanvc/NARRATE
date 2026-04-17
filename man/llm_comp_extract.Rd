@@ -7,7 +7,7 @@
 llm_comp_extract(
   evaluation_text,
   prompt,
-  model = "gpt-5-mini",
+  model = "gpt-5.1",
   endpoint = "https://azure-ai.hms.edu",
   version = "2024-10-21",
   debug = F

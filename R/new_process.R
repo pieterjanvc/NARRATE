@@ -25,30 +25,18 @@ llm_comp_extract <- function(
   debug = F
 ) {
   baseURL <- sprintf(
-    "%s/openai/deployments/%s/chat/completions?api-version=%s",
-    endpoint,
-    model,
-    version
+    "%s/openai/v1/responses",
+    endpoint
   )
 
-  # gpt-4o uses max_tokens + supports temperature;
-  # gpt-5.1 uses max_completion_tokens and does not accept temperature
-  is_gpt4o <- grepl("gpt-4o", model)
-  token_param <- if (is_gpt4o) "max_tokens" else "max_completion_tokens"
-
-  body <- c(
-    list(
-      messages = list(
-        list(role = "system", content = prompt),
-        list(role = "user", content = evaluation_text)
-      ),
-      response_format = list(type = "json_object")
-    ),
-    if (is_gpt4o) list(temperature = 0) else list(),
-    # gpt-4o: 800 output tokens is sufficient
-    # gpt-5.1: reasoning model — tokens cover internal thinking + output,
-    # so budget must be large enough for both; 4000 leaves ~3200 for actual output
-    setNames(list(if (is_gpt4o) 800L else 10000L), token_param)
+  body <- list(
+    instructions = prompt,
+    input = paste0(evaluation_text, "\n\nRespond with JSON as instructed."),
+    model = model,
+    text = list(format = list(type = "json_object")),
+    # Reasoning model — tokens cover internal thinking + output,
+    # so budget must be large enough for both; 10000 leaves ~8000+ for actual output
+    max_output_tokens = 10000L
   )
 
   req <- request(baseURL) |>
@@ -75,9 +63,9 @@ llm_comp_extract <- function(
   }
 
   resp <- resp_body_json(req)
-  raw <- resp$choices[[1]]$message$content
-  tokens_in <- resp$usage$prompt_tokens
-  tokens_out <- resp$usage$completion_tokens
+  raw <- resp$output[[1]]$content[[1]]$text
+  tokens_in <- resp$usage$input_tokens
+  tokens_out <- resp$usage$output_tokens
 
   # Parse and validate
   parsed <- tryCatch(
@@ -145,18 +133,10 @@ llm_comp_score <- function(
   prompt,
   model = "gpt-5.1",
   endpoint = "https://azure-ai.hms.edu",
-  version = "2024-10-21",
+  version = "2025-03-01-preview",
   debug = F
 ) {
-  baseURL <- sprintf(
-    "%s/openai/deployments/%s/chat/completions?api-version=%s",
-    endpoint,
-    model,
-    version
-  )
-
-  is_gpt4o <- grepl("gpt-4o", model)
-  token_param <- if (is_gpt4o) "max_tokens" else "max_completion_tokens"
+  baseURL <- sprintf("%s/openai/v1/responses", endpoint)
 
   user_msg <- toJSON(
     list(
@@ -167,16 +147,12 @@ llm_comp_score <- function(
     auto_unbox = TRUE
   )
 
-  body <- c(
-    list(
-      messages = list(
-        list(role = "system", content = prompt),
-        list(role = "user", content = user_msg)
-      ),
-      response_format = list(type = "json_object")
-    ),
-    if (is_gpt4o) list(temperature = 0) else list(),
-    setNames(list(if (is_gpt4o) 800L else 4000L), token_param)
+  body <- list(
+    model = model,
+    instructions = prompt,
+    input = paste0(user_msg, "\n\nRespond with JSON as instructed."),
+    text = list(format = list(type = "json_object")),
+    max_output_tokens = 4000L
   )
 
   req <- request(baseURL) |>
@@ -199,9 +175,9 @@ llm_comp_score <- function(
   }
 
   resp <- resp_body_json(req)
-  raw <- resp$choices[[1]]$message$content
-  tokens_in <- resp$usage$prompt_tokens
-  tokens_out <- resp$usage$completion_tokens
+  raw <- resp$output[[1]]$content[[1]]$text
+  tokens_in <- resp$usage$input_tokens
+  tokens_out <- resp$usage$output_tokens
 
   parsed <- tryCatch(
     fromJSON(raw, simplifyVector = FALSE),
@@ -354,14 +330,12 @@ llm_comp_extract_batch_submit <- function(
 
   # Build the LLM API request
   requests <- apply(review_info, 1, function(x) {
-    body <- list(
-      messages = list(
-        list(role = "system", content = x["prompt"]),
-        list(role = "user", content = x["evaluation"])
-      ),
-      response_format = list(type = "json_object")
+    list(
+      instructions = x["prompt"],
+      input = paste0(x["evaluation"], "\n\nRespond with JSON as instructed."),
+      text = list(format = list(type = "json_object")),
+      max_output_tokens = 10000L
     )
-    body
   }) |>
     setNames(review_info$name)
 
@@ -611,11 +585,10 @@ llm_comp_score_batch_submit <- function(
       )
       prompt <- review_info$prompt[review_info$review_id == rid]
       list(
-        messages = list(
-          list(role = "system", content = prompt),
-          list(role = "user", content = user_msg)
-        ),
-        response_format = list(type = "json_object")
+        instructions = prompt,
+        input = paste0(user_msg, "\n\nRespond with JSON as instructed."),
+        text = list(format = list(type = "json_object")),
+        max_output_tokens = 4000L
       )
     }),
     paste0("review-", review_info$review_id)

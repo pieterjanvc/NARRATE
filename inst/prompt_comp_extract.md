@@ -12,7 +12,9 @@ identify which of the 8 competencies are explicitly addressed.
 
 2. **One competency per quote**: Assign each piece of text to maximum one
    competency — i.e. the most specific match. Do not repeat the same text under
-   two competencies. See the disambiguation section below for details.
+   two competencies. Sometimes content is repeated (slightly differently worded
+   but same meaning), in which case you treat this as a single quote. See the
+   disambiguation section below for details.
 
 3. **Verbatim only**: Copy the exact text from the evaluation. Do not
    paraphrase, summarize, or combine sentences. Multiple spans across the text

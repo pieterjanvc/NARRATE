@@ -9,7 +9,7 @@ llm_comp_score(
   prompt,
   model = "gpt-5.1",
   endpoint = "https://azure-ai.hms.edu",
-  version = "2024-10-21",
+  version = "2025-03-01-preview",
   debug = F
 )
 }

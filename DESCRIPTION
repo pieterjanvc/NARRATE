@@ -18,9 +18,11 @@ Suggests:
   keyring
 Imports:
   bslib,
+  callr,
   dplyr,
   DT,
   httr2,
+  jsonlite,
   pins,
   rlang,
   RSQLite,
