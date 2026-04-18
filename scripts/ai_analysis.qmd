@@ -1,0 +1,198 @@
+---
+title: "Core Faculty Model Evaluation - AI results"
+format: html
+execute:
+  echo: false
+---
+
+
+```{r, include = FALSE}
+devtools::load_all()
+library(dplyr)
+library(ggplot2)
+db_path <- here::here("local","batch_test.db")
+conn <- dbGetConn(db_path)
+```
+
+# Overall statistics
+
+## Reviewed
+```{r}
+# Completed review status codes: -1 (flagged), 2 (legacy complete), 3 (extraction complete), 5 (scoring complete)
+completed_codes <- c(-1L, 2L, 3L, 5L)
+
+# Total evaluations reviewed (with at least one completed review_assignment)
+tbl(conn, "review_assignment") |>
+  filter(statusCode %in% completed_codes) |>
+  distinct(evaluation_id) |>
+  left_join(tbl(conn, "evaluation"), by = c("evaluation_id" = "id")) |>
+  count(summary_flg, complete, name = "evaluations_reviewed") |>
+  arrange(summary_flg, complete) |>
+  collect() |>
+  mutate(
+    summary_flg = ifelse(summary_flg == 1, "Yes", "No"),
+    complete = ifelse(complete == 1, "Yes", ifelse(is.na(complete), "Unknown", "No"))
+  ) |>
+  knitr::kable(col.names = c("Summary Evaluation", "Complete", "Evaluations Reviewed"))
+```
+
+## By clerkship
+```{r}
+tbl(conn, "review_assignment") |>
+  filter(statusCode %in% completed_codes) |>
+  distinct(evaluation_id) |>
+  left_join(tbl(conn, "evaluation"), by = c("evaluation_id" = "id")) |>
+  left_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
+  left_join(tbl(conn, "clerkship"), by = c("clerkship_id" = "id")) |>
+  count(clerkship, name = "evaluations_reviewed") |>
+  arrange(desc(evaluations_reviewed)) |>
+  collect() |>
+  knitr::kable(col.names = c("Clerkship", "Evaluations Reviewed"))
+```
+
+## By evaluator
+```{r}
+tbl(conn, "review_assignment") |>
+  filter(statusCode %in% completed_codes) |>
+  distinct(evaluation_id) |>
+  left_join(tbl(conn, "evaluation"), by = c("evaluation_id" = "id")) |>
+  left_join(tbl(conn, "evaluator"), by = c("evaluator_id" = "id")) |>
+  group_by(evaluator) |>
+  summarise(
+    complete_regular = sum(ifelse(summary_flg == 0L, 1L, 0L), na.rm = TRUE),
+    complete_summary = sum(ifelse(summary_flg == 1L, 1L, 0L), na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(total = complete_regular + complete_summary) |>
+  arrange(desc(total)) |>
+  select(evaluator, complete_regular, complete_summary, total) |>
+  collect() |>
+  knitr::kable(col.names = c("Evaluator", "Regular", "Summary", "Total"))
+```
+
+## By student
+```{r}
+tbl(conn, "review_assignment") |>
+  filter(statusCode %in% completed_codes) |>
+  distinct(evaluation_id) |>
+  left_join(tbl(conn, "evaluation"), by = c("evaluation_id" = "id")) |>
+  left_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
+  left_join(tbl(conn, "student"), by = c("student_id" = "id")) |>
+  count(learner_anon_id, name = "evaluations_reviewed") |>
+  arrange(desc(evaluations_reviewed)) |>
+  collect() |>
+  knitr::kable(col.names = c("Student (Anon ID)", "Evaluations Reviewed"))
+```
+
+# Review scores
+
+## By competency
+```{r}
+competency_names <- tibble::tribble(
+  ~id, ~name,
+  1L,  "Medical Knowledge",
+  2L,  "Medical History Taking and Physical Examination",
+  3L,  "Provide Effective Oral and Written Professional Communication",
+  4L,  "Clinical Reasoning and Decision Making",
+  5L,  "Interpersonal and Communication Skills",
+  6L,  "Scholarly Inquiry and Evidence-Based Medicine Integration",
+  7L,  "Professionalism",
+  8L,  "Interprofessional and Team-Based Care"
+)
+
+result <- tbl(conn, "competency_score") |>
+  left_join(tbl(conn, "review_assignment"), by = c("review_assignment_id" = "id")) |>
+  filter(statusCode %in% completed_codes, !is.na(specificity)) |>
+  group_by(competency_id) |>
+  summarise(
+    n      = n(),
+    spec_avg = round(mean(specificity, na.rm = TRUE), 2),
+    spec_1 = sum(ifelse(specificity == 1L, 1L, 0L), na.rm = TRUE),
+    spec_2 = sum(ifelse(specificity == 2L, 1L, 0L), na.rm = TRUE),
+    spec_3 = sum(ifelse(specificity == 3L, 1L, 0L), na.rm = TRUE),
+    spec_4 = sum(ifelse(specificity == 4L, 1L, 0L), na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  collect() |>
+  left_join(competency_names, by = c("competency_id" = "id")) |>
+  arrange(competency_id) |>
+  select(id = competency_id, name, n, spec_avg, spec_1, spec_2, spec_3, spec_4)
+
+knitr::kable(result, col.names = c("ID", "Competency", "N", "Avg", "Score 1", "Score 2", "Score 3", "Score 4"))
+```
+
+## General scores
+
+```{r}
+result <- tbl(conn, "review_assignment") |> filter(statusCode == 5) |> 
+  summarise(
+    n      = n(),
+    util_avg = round(mean(utility, na.rm = TRUE), 2),
+    util_1 = sum(ifelse(utility == 1L, 1L, 0L), na.rm = TRUE),
+    util_2 = sum(ifelse(utility == 2L, 1L, 0L), na.rm = TRUE),
+    util_3 = sum(ifelse(utility == 3L, 1L, 0L), na.rm = TRUE)
+    ) |> collect()
+knitr::kable(result, col.names = c("n", "avg", "Score 1", "Score 2", "Score 3"))
+```
+```{r}
+result <- tbl(conn, "review_assignment") |> filter(statusCode == 5) |> 
+  summarise(
+    n      = n(),
+    sent_avg = round(mean(sentiment, na.rm = TRUE), 2),
+    sent_1 = sum(ifelse(sentiment == 1L, 1L, 0L), na.rm = TRUE),
+    sent_2 = sum(ifelse(sentiment == 2L, 1L, 0L), na.rm = TRUE),
+    sent_3 = sum(ifelse(sentiment == 3L, 1L, 0L), na.rm = TRUE),
+    sent_4 = sum(ifelse(sentiment == 4L, 1L, 0L), na.rm = TRUE),
+    sent_5 = sum(ifelse(sentiment == 5L, 1L, 0L), na.rm = TRUE)
+    ) |> collect()
+knitr::kable(result, col.names = c("n", "avg", "Score 1", "Score 2", "Score 3", "Score 4", "Score 5"))
+```
+
+# Ranking
+
+```{r}
+# Weights: coverage 35%, avg specificity 45%, utility 20%
+w_c <- 0.35; w_s <- 0.45; w_u <- 0.20
+
+comp_summary <- tbl(conn, "competency_score") |>
+  filter(!is.na(specificity)) |>
+  group_by(review_assignment_id) |>
+  summarise(
+    n_competencies  = n(),
+    avg_specificity = mean(specificity, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ranking <- tbl(conn, "review_assignment") |>
+  filter(statusCode == 5L) |>
+  left_join(comp_summary, by = c("id" = "review_assignment_id")) |>
+  left_join(tbl(conn, "evaluation"), by = c("evaluation_id" = "id")) |>
+  left_join(tbl(conn, "evaluator"),  by = c("evaluator_id"  = "id")) |>
+  left_join(tbl(conn, "rotation"),   by = c("rotation_id"   = "id")) |>
+  left_join(tbl(conn, "clerkship"),  by = c("clerkship_id"  = "id")) |>
+  filter(summary_flg == 0) |> 
+  select(evaluation_id, evaluator, clerkship,
+         utility, n_competencies, avg_specificity) |>
+  collect() |>
+  mutate(
+    n_competencies   = ifelse(is.na(n_competencies), 0L, n_competencies),
+    coverage_norm    = n_competencies / 8,
+    specificity_norm = ifelse(n_competencies > 0, (avg_specificity - 1) / 3, 0),
+    utility_norm     = (utility - 1) / 2,
+    total_score      = round(
+      (w_c * coverage_norm + w_s * specificity_norm + w_u * utility_norm) * 100, 1
+    )
+  ) |>
+  arrange(desc(total_score)) |>
+  select(evaluation_id, evaluator, clerkship, n_competencies, avg_specificity, utility, total_score)
+
+knitr::kable(
+  ranking,
+  col.names = c("Eval ID", "Evaluator", "Clerkship", "N Competencies", "Avg Specificity", "Utility", "Total Score"),
+  digits    = c(0, 0, 0, 0, 2, 0, 1)
+)
+```
+
+```{r}
+dbFinish(conn)
+```

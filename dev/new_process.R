@@ -1,7 +1,7 @@
 # ARGUMENTS
 # *********
 seed <- 20260414
-db_path <- "local/new_process.db"
+db_path <- "local/batch_test.db"
 dbSetup(db_path, "inst/cfme.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
 conn <- dbGetConn(db_path)
@@ -83,21 +83,21 @@ tbl(conn, "batch") |> filter(statusCode < 4)
 batch_submit <- list(id = 1)
 
 batch_submit <- llm_comp_extract_batch_submit(conn, review_ids)
-llm_batch_status(batch1_submit$id, conn)
+llm_batch_status(batch_submit$id, conn)
 # bg_check <- batch_status_notify(batch_id = batch_submit$id, db_path = db_path)
 batch1_result <- batch_extract_process(batch_submit$id, conn)
 batch_submit <- llm_comp_score_batch_submit(conn, review_ids)
 llm_batch_status(batch_submit$id, conn)
 batch2_result <- batch_score_process(batch_submit$id, conn)
 
-tbl(conn, "review_assignment") |> filter(statusCode == 5)
+tbl(conn, "review_assignment") |> filter(statusCode != 5)
 
 # --- test single synchonous
 
 assignments <- dbReviewAssignment(
   conn,
   reviewer_id = 1,
-  evaluation_id = 28,
+  evaluation_id = 201:500,
   redacted = T,
   include_questions = T
 )

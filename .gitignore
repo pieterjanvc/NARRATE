@@ -9,3 +9,6 @@ data/*
 **/*.pdf
 dataExploration_files/
 deploy/*
+
+/.quarto/
+**/*.quarto_ipynb
