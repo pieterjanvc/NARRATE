@@ -64,23 +64,21 @@ test <- batch_results_preprocess(
   file_output_id = "file-8cf2d1d8a85049688ee1d7b6a41af4ed"
 )
 
-# --------
+# -------- BATCH - 2148 total
 
 assingments <- dbReviewAssignment(
   conn,
   reviewer_id = 1,
-  evaluation_id = 28:29,
+  evaluation_id = 1001:2148,
   redacted = T,
   include_questions = T
 )
 
 review_ids <- tbl(conn, "review_assignment") |>
-  filter(statusCode < 4) |>
+  filter(statusCode == 0) |>
   pull(id)
 
 tbl(conn, "batch") |> filter(statusCode < 4)
-
-batch_submit <- list(id = 1)
 
 batch_submit <- llm_comp_extract_batch_submit(conn, review_ids)
 llm_batch_status(batch_submit$id, conn)
@@ -90,7 +88,7 @@ batch_submit <- llm_comp_score_batch_submit(conn, review_ids)
 llm_batch_status(batch_submit$id, conn)
 batch2_result <- batch_score_process(batch_submit$id, conn)
 
-tbl(conn, "review_assignment") |> filter(statusCode != 5)
+tbl(conn, "review_assignment") |> filter(statusCode == 5) |> summarise(n = n())
 
 # --- test single synchonous
 
