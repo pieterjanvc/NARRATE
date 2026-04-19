@@ -1,22 +1,24 @@
 # https://rstudio.github.io/bslib/articles/cards/index.html
+library(shiny)
+library(bslib)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(DT)
+library(sqlife)
 
-dbInfo <- "../local/demo.db"
+
+dbInfo <- "../local/clean_up.db"
 # dbInfo <- "../local/cfme.db"
-dbInfo <- "~/Downloads/cfme.db"
+# dbInfo <- "~/Downloads/cfme.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
   dbInfo <- "cfme.db"
-  # These are the libraries that the app needs when deployed
-  library(shiny)
-  library(bslib)
-  library(dplyr)
-  library(stringr)
-  library(tidyr)
-  library(DT)
-  library(sqlife)
   library(CFME)
+  # These are the libraries that the app needs when deployed
 } else {
+  devtools::load_all()
   Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
 }
 
@@ -201,8 +203,34 @@ server <- function(input, output, session) {
   # DB Connection
   conn <- dbGetConn(dbInfo, session = session)
 
+  # ── Rubric data ──────────────────────────────────────────────────────────────
+  # Load once per session from the competency and score tables populated by
+  # rubric_parsing(). These replace the old parsePrompt() approach.
+
+  competencies_db <- tbl(conn, "competency") |>
+    group_by(cID) |>
+    filter(id == max(id)) |>
+    ungroup() |>
+    arrange(cID) |>
+    collect()
+
+  scores_db <- tbl(conn, "score") |> collect()
+  specificity_opts <- scores_db |>
+    filter(category == "Specificity") |>
+    arrange(as.integer(value))
+  utility_opts <- scores_db |>
+    filter(category == "Utility") |>
+    arrange(as.integer(value))
+  sentiment_opts <- scores_db |>
+    filter(category == "Sentiment") |>
+    arrange(as.integer(value))
+
+  # Helper: named vector of integer value → "N - description" label
+  score_choices <- function(opts) {
+    setNames(as.integer(opts$value), paste(opts$value, "-", opts$description))
+  }
+
   reviewScores <- reactiveVal()
-  prompt <- reactiveVal()
 
   # Highlight selection module
   defaultEvidence <- reactiveVal(c())
@@ -232,7 +260,10 @@ server <- function(input, output, session) {
       ) |>
       collect() |>
       arrange(
-        match(statusCode, c(1, 0, -1, 2, setdiff(c(0:2), unique(statusCode)))),
+        match(
+          statusCode,
+          c(1, 0, -1, 2, 5, setdiff(c(0:5, -1), unique(statusCode)))
+        ),
         evaluation_id
       ) |>
       mutate(
@@ -244,37 +275,34 @@ server <- function(input, output, session) {
           case_when(
             statusCode == 0 ~ "New",
             statusCode == 1 ~ "In progress",
-            statusCode == 2 ~ "Completed",
+            statusCode %in% c(2, 5) ~ "Completed",
             statusCode == -1 ~ "Completed with flag",
             TRUE ~ "Error"
           )
         )
       )
+
     lblInfo <- reviews |>
-      filter(statusCode < 3) |>
+      filter(statusCode %in% c(-1, 0, 1, 2, 5)) |>
       group_by(statusCode) |>
       summarise(n = n())
 
-    # Calculate each for status
-    lblInfo <- data.frame(statusCode = -1:2) |>
+    lblInfo <- data.frame(statusCode = c(-1, 0, 1, 2, 5)) |>
       left_join(lblInfo, by = "statusCode") |>
       mutate(n = ifelse(is.na(n), 0, n)) |>
       pull(n)
+    # lblInfo: [1]=-1 (flagged), [2]=0 (new), [3]=1 (in progress), [4]=2 (done), [5]=5 (AI done)
 
-    # Set the eval IDs
     updateSelectInput(
       session,
       "reviewID",
       label = sprintf(
-        "%i to start - %i in progress - %i competed",
+        "%i to start - %i in progress - %i completed",
         lblInfo[2],
         lblInfo[3],
-        lblInfo[4] + lblInfo[1]
+        lblInfo[4] + lblInfo[5] + lblInfo[1]
       ),
-      choices = setNames(
-        reviews$id,
-        reviews$descr
-      ),
+      choices = setNames(reviews$id, reviews$descr),
       selected = ifelse(missing(selected), reviews$id[1], selected)
     )
   }
@@ -283,11 +311,10 @@ server <- function(input, output, session) {
     updateReviewID()
   })
 
-  # Add the AI review button when not a human
+  # Add the AI review button when the assigned reviewer is an AI model
   output$aiReviewUI <- renderUI({
     reviewID <- as.integer(input$reviewID)
 
-    # Check if the review is AI and new
     check <- tbl(conn, "review_assignment") |>
       filter(id == reviewID, statusCode == 0) |>
       inner_join(
@@ -314,33 +341,34 @@ server <- function(input, output, session) {
       footer = NULL
     ))
 
-    # Run the AI review
-    llmReview <- llm_review(
-      conn,
-      review_assignment_id = as.integer(input$reviewID),
-      log = "apiLog.csv",
-      maxTries = 3
-    )
+    rid <- as.integer(input$reviewID)
 
-    dbAIreview(conn, llmReview)
+    # Step 1: extraction (force = TRUE since statusCode may not be 0 yet)
+    extract_res <- llm_comp_extract_run(conn, review_ids = rid, force = TRUE)
 
-    # Set the review as finished (or flag if error)
-    data <- data.frame(
-      id = as.integer(input$reviewID),
-      statusCode = ifelse(llmReview[[1]]$statusCode == 3, 2, -1)
-    )
-    tbl_update(data, conn, "review_assignment", returnData = F)
+    # Step 2: scoring (only if extraction succeeded)
+    if (!is.null(extract_res) && isTRUE(extract_res$statusCode == 3)) {
+      llm_comp_score_run(conn, review_ids = rid, force = TRUE)
+    }
 
-    updateReviewID(input$reviewID)
-    tabStatusIcon("comp", 2, session = session)
-    tabStatusIcon("overall", 2, session = session)
-    tabStatusIcon("submit", 2, session = session)
+    final_status <- tbl(conn, "review_assignment") |>
+      filter(id == rid) |>
+      pull(statusCode)
+
     removeModal()
+    updateReviewID(input$reviewID)
     forceRefresh(forceRefresh() + 1)
-    showNotification("AI review complete", type = "message")
+    showNotification(
+      if (isTRUE(final_status == 5)) {
+        "AI review complete"
+      } else {
+        "AI review failed"
+      },
+      type = if (isTRUE(final_status == 5)) "message" else "error"
+    )
   })
 
-  # Get the prompt and use it to create the rubric
+  # Reload UI when review selection changes or after a forced refresh
   forceRefresh <- reactiveVal(0)
   observeEvent(
     c(input$reviewID, forceRefresh()),
@@ -360,7 +388,7 @@ server <- function(input, output, session) {
         filter(competency_score_id %in% local(compScores$id)) |>
         collect()
 
-      reviewStatus <- review_assingment$statusCode %in% c(-1, 2)
+      reviewStatus <- review_assingment$statusCode %in% c(-1, 2, 5)
 
       if (reviewStatus) {
         compStatus <- 2
@@ -376,53 +404,25 @@ server <- function(input, output, session) {
       tabStatusIcon("overall", overallStatus, session = session)
       tabStatusIcon("submit", submitStatus, session = session)
 
-      # Check if the eval was already reviewed and use the same prompt version
-      prompt_id <- review_assingment$prompt_id
-
-      # Otherwise use the latest prompt version
-      if (length(prompt_id) == 0) {
-        prompt_id <- tbl(conn, "prompt") |>
-          filter(id == max(id)) |>
-          pull(id)
-      }
-
-      # Get the prompt text and parse it
-      text <- tbl(conn, "prompt") |>
-        filter(id == prompt_id) |>
-        pull(prompt)
-      parsed <- parsePrompt(text)
-
-      # Update inputs based on rubric phrasing
-
-      # Competency list
+      # Competency list (from competency table)
       updateSelectInput(
         inputId = "cID",
-        choices = setNames(
-          1:length(parsed$content$competencies),
-          sapply(parsed$content$competencies, "[[", "name")
-        )
+        choices = setNames(competencies_db$id, competencies_db$name)
       )
 
-      # Specificity score
-      #  The value is adjusted in the input$cID function
+      # Specificity score options
       updateRadioButtons(
         inputId = "specificity",
-        label = parsed$content$compScore$specificity$desciption,
-        choices = setNames(
-          1:length(parsed$content$compScore$specificity$options),
-          parsed$content$compScore$specificity$options
-        ),
+        label = "Specificity score",
+        choices = score_choices(specificity_opts),
         selected = NULL
       )
 
       # Overall scores
       updateRadioButtons(
         inputId = "util",
-        label = parsed$content$overallScore$util$desciption,
-        choices = setNames(
-          1:length(parsed$content$overallScore$util$options),
-          parsed$content$overallScore$util$options
-        ),
+        label = "Utility score",
+        choices = score_choices(utility_opts),
         selected = if (is.na(review_assingment$utility)) {
           character(0)
         } else {
@@ -431,11 +431,8 @@ server <- function(input, output, session) {
       )
       updateRadioButtons(
         inputId = "sent",
-        label = parsed$content$overallScore$sent$desciption,
-        choices = setNames(
-          1:length(parsed$content$overallScore$sent$options),
-          parsed$content$overallScore$sent$options
-        ),
+        label = "Sentiment score",
+        choices = score_choices(sentiment_opts),
         selected = if (is.na(review_assingment$sentiment)) {
           character(0)
         } else {
@@ -457,7 +454,7 @@ server <- function(input, output, session) {
       updateActionButton(
         inputId = "complete",
         label = ifelse(
-          review_assingment$statusCode %in% c(-1, 2),
+          review_assingment$statusCode %in% c(-1, 2, 5),
           "Resubmit",
           "Mark as complete"
         )
@@ -469,8 +466,6 @@ server <- function(input, output, session) {
         compScores = compScores,
         compText = compText
       ))
-
-      prompt(list(text = text, parsed = parsed))
     },
     ignoreInit = T
   )
@@ -513,17 +508,18 @@ server <- function(input, output, session) {
     )
   })
 
-  # This is the definition underneath the selected competency
+  # Competency description from the competency table
   output$compDescr <- renderUI({
-    tagList(tags$i(
-      prompt()$parsed$content$competencies[[input$cID]]$description
-    ))
+    req(input$cID, nrow(competencies_db) > 0)
+    desc <- competencies_db$description[
+      competencies_db$id == as.integer(input$cID)
+    ]
+    tagList(tags$i(if (length(desc) == 1) desc else ""))
   })
 
   # The UI that shows the evaluation
   output$evaluation <- renderUI({
     req(input$reviewID)
-    # Get the evaluation ID for the assigned review
     evalID <- tbl(conn, "review_assignment") |>
       filter(id == as.integer(input$reviewID)) |>
       pull(evaluation_id)
@@ -604,7 +600,6 @@ server <- function(input, output, session) {
 
   # Add or update the overall scores
   observeEvent(input$addOverall, {
-    # Check
     if (is.null(input$util) || is.null(input$sent)) {
       showModal(modalDialog(
         HTML("Please make sure to indicate both a Utility and Sentiment score"),
@@ -638,34 +633,36 @@ server <- function(input, output, session) {
     tabStatusIcon("submit", 1, session = session)
     showNotification(sprintf("Scores updated"), type = "message")
   })
+
   # The summary of the review scores before submitting
   output$summary <- renderUI({
     req(reviewScores())
 
-    # Add prompt text to IDs and scores
-    promptText <- prompt()$parsed$content
+    overallScores <- reviewScores()$overallScores
+
+    # Build lookup vectors for score labels
+    spec_lookup <- setNames(
+      specificity_opts$description,
+      as.integer(specificity_opts$value)
+    )
+    util_lookup <- setNames(
+      utility_opts$description,
+      as.integer(utility_opts$value)
+    )
+    sent_lookup <- setNames(
+      sentiment_opts$description,
+      as.integer(sentiment_opts$value)
+    )
 
     compScores <- reviewScores()$compScores |>
       select(specificity, competency_id) |>
       left_join(
-        data.frame(
-          competency_id = 1:length(promptText$competencies),
-          competency = sapply(promptText$competencies, "[[", "name")
-        ),
+        competencies_db |> select(competency_id = id, competency = name),
         by = "competency_id"
       ) |>
-      left_join(
-        data.frame(
-          specificity = 1:length(promptText$compScore$specificity$options),
-          specificity_score = promptText$compScore$specificity$options
-        ),
-        by = "specificity"
-      ) |>
-      select(competency, score = specificity_score)
+      mutate(score = spec_lookup[as.character(specificity)]) |>
+      select(competency, score)
 
-    overallScores <- reviewScores()$overallScores
-
-    # ACTUAL UI
     tagList(
       tags$h3("Review Summary"),
       tags$b("COMPETENCIES"),
@@ -676,19 +673,19 @@ server <- function(input, output, session) {
         rownames = FALSE
       ),
       tags$b("UTILITY"),
-      p(promptText$overallScore$util$options[overallScores$utility]),
+      p(util_lookup[as.character(overallScores$utility)]),
       tags$b("SENTIMENT"),
-      p(promptText$overallScore$sent$options[overallScores$sentiment]),
+      p(sent_lookup[as.character(overallScores$sentiment)]),
       tags$hr()
     )
   })
 
-  #When the complete button is clicked
+  # When the complete button is clicked
   observeEvent(input$complete, {
     if (
       (nrow(reviewScores()$compScores) == 0 ||
         is.na(reviewScores()$overallScores$utility) ||
-        is.na(reviewScores()$overallScores$sent)) &
+        is.na(reviewScores()$overallScores$sentiment)) &
         !input$flag
     ) {
       showModal(modalDialog(
@@ -714,7 +711,7 @@ server <- function(input, output, session) {
 
   #### ANALYSIS TAB ####
 
-  # Pupulate the review dropdown
+  # Populate the review dropdown
   reviewInfo <- tbl(conn, "review_assignment") |>
     left_join(
       tbl(conn, "reviewer") |> select(reviewer_id = id, human),
@@ -727,7 +724,7 @@ server <- function(input, output, session) {
     summarise(
       nAI = n() - sum(human),
       nHuman = sum(human),
-      nComplete = sum(statusCode %in% c(-1, 2))
+      nComplete = sum(statusCode %in% c(-1, 2, 5))
     ) |>
     ungroup() |>
     collect()
@@ -791,28 +788,39 @@ server <- function(input, output, session) {
         by = "competency_score_id"
       )
 
-    prompt <- parsePrompt(
-      tbl(conn, "prompt") |>
-        filter(id == local(max(overall$prompt_id))) |>
-        pull(prompt)
-    )
-
     list(
       overall = overall,
       compInfo = compInfo,
-      compText = compText,
-      prompt = prompt
+      compText = compText
     )
   })
 
   comparisonTable <- reactive({
-    # test <<- analysisInfo()
-    prompt <- analysisInfo()$prompt$content
+    info <- analysisInfo()
+
+    # Build lookup structures from server-scope rubric data
+    spec_lookup <- setNames(
+      specificity_opts$description,
+      as.integer(specificity_opts$value)
+    )
+    util_df <- data.frame(
+      utility = as.integer(utility_opts$value),
+      util = utility_opts$description
+    )
+    sent_df <- data.frame(
+      sentiment = as.integer(sentiment_opts$value),
+      sent = sentiment_opts$description
+    )
+    comp_metric <- data.frame(
+      competency_id = competencies_db$id,
+      metric = paste("COMPETENCY -", competencies_db$name)
+    )
+
     bind_rows(
-      analysisInfo()$compInfo |>
+      info$compInfo |>
         select(reviewer, competency_id, specificity, note) |>
         mutate(
-          specificity = prompt$compScore$specificity$options[specificity],
+          specificity = spec_lookup[as.character(specificity)],
           specificity = ifelse(
             is.na(note),
             specificity,
@@ -828,18 +836,9 @@ server <- function(input, output, session) {
           names_from = reviewer,
           values_from = specificity
         ) |>
-        left_join(
-          data.frame(
-            competency_id = 1:length(prompt$competencies),
-            metric = paste(
-              "COMPETENCY -",
-              sapply(prompt$competencies, "[[", "name")
-            )
-          ),
-          by = "competency_id"
-        ) |>
+        left_join(comp_metric, by = "competency_id") |>
         select(-competency_id),
-      analysisInfo()$overall |>
+      info$overall |>
         select(utility, sentiment, note) |>
         mutate(
           note = ifelse(
@@ -848,31 +847,16 @@ server <- function(input, output, session) {
             sprintf("<i style='color:#e04233;'>%s<i>", note)
           )
         ) |>
-        left_join(
-          data.frame(
-            utility = 1:length(prompt$overallScore$util$options),
-            util = prompt$overallScore$util$options
-          ),
-          by = "utility"
-        ) |>
-        left_join(
-          data.frame(
-            sentiment = 1:length(prompt$overallScore$sent$options),
-            sent = prompt$overallScore$sent$options
-          ),
-          by = "sentiment"
-        ) |>
+        left_join(util_df, by = "utility") |>
+        left_join(sent_df, by = "sentiment") |>
         select(util, sent, note) |>
         t() |>
         as.data.frame() |>
-        rename_with(function(x) {
-          as.character(analysisInfo()$overall$reviewer)
-        }) |>
+        rename_with(function(x) as.character(info$overall$reviewer)) |>
         mutate(metric = c("UTILITY", "SENTIMENT", "REVIEW NOTE"))
     )
   })
 
-  # input <- list(analysis_evalID = 660)
   output$analysis_table <- renderDT(
     {
       comparisonTable() |>
@@ -939,7 +923,6 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$adminCheck, {
-    # Check password
     if (
       Sys.getenv("adminPass") == "" ||
         Sys.getenv("adminPass") != input$adminPass
@@ -948,7 +931,6 @@ server <- function(input, output, session) {
       return()
     }
 
-    # Set pins if needed
     pinAction <- input$pinAction[input$pinAction %in% c("import", "export")]
     if (length(pinAction) > 0) {
       check <- pinDB(dbInfo, pinAction)
@@ -961,7 +943,6 @@ server <- function(input, output, session) {
     }
 
     removeModal()
-    # Download if set
     if ("download" %in% input$pinAction) {
       showModal(modalDialog(mod_dbSetup_ui("dbMod", "link")))
     }

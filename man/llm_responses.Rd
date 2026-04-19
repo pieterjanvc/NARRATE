@@ -2,7 +2,7 @@
 % Please edit documentation in R/llm.R
 \name{llm_responses}
 \alias{llm_responses}
-\title{Call an Azure response LLM}
+\title{Call the Azure OpenAI responses API}
 \usage{
 llm_responses(
   input,
@@ -13,24 +13,21 @@ llm_responses(
 )
 }
 \arguments{
-\item{input}{User prompt}
+\item{input}{User input text}
 
-\item{instructions}{Default = "You are a helpful AI assistant". System prompt}
+\item{instructions}{System instructions. Default = "You are a helpful AI assistant"}
 
-\item{log}{If set, the token usage is kept track of in this CSV file}
+\item{log}{If set, token usage is appended to this CSV file}
 
-\item{model}{Default = gpt-4o-1120. LLM model to use}
+\item{model}{Default = gpt-5-mini. Azure deployment name}
 
-\item{endpoint}{Default = https://azure-ai.hms.edu. Azure endpoint}
+\item{endpoint}{Default = https://azure-ai.hms.edu. Azure endpoint base URL}
 }
 \value{
-LLM Response object (list).
-
-If a log file is et a line is added to a CSV file with columns
-timestamp, promptTokens and responseTokens (headers not included)
+Parsed response list
 }
 \description{
 Note that this function expects an environment variable HMS_AZURE_API
-that contains the API key You can set this up using
+that contains the API key. You can set this up using
 \code{Sys.setenv(HMS_AZURE_API = "API token here")}
 }

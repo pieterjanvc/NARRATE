@@ -35,42 +35,15 @@ assingments <- dbReviewAssignment(
   reviewer_id = 1,
   evaluation_id = evalSample,
   redacted = T,
-  include_questions = T,
-  prompt_extract_id = prompt_extract_id,
-  prompt_score_id = prompt_score_id
+  include_questions = T
 )
 
+review_ids <- 1:3
 review_ids <- tbl(conn, "review_assignment") |>
   filter(statusCode == 0) |>
   pull(id)
 
-batch1 <- llm_comp_extract_batch_submit(conn, review_ids)
-
-llm_batch_status(batch_id = batch1$id, conn)
-
-test <- batch_extract_process(3)
-
-batch2 <- llm_comp_score_batch_submit(conn, review_ids)
-
-llm_batch_status(batch_id = batch2$id, conn)
-
-tbl(conn, "batch") |> select(file_output_id)
-
-batch_id = 3
-
-test <- batch_results_preprocess(
-  file_output_id = "file-8cf2d1d8a85049688ee1d7b6a41af4ed"
-)
-
 # -------- BATCH - 2148 total
-
-assingments <- dbReviewAssignment(
-  conn,
-  reviewer_id = 1,
-  evaluation_id = 1001:2148,
-  redacted = T,
-  include_questions = T
-)
 
 review_ids <- tbl(conn, "review_assignment") |>
   filter(statusCode == 0) |>
@@ -78,6 +51,7 @@ review_ids <- tbl(conn, "review_assignment") |>
 
 tbl(conn, "batch") |> filter(statusCode < 4)
 
+# batch_submit <- list(id = 1)
 batch_submit <- llm_comp_extract_batch_submit(conn, review_ids)
 llm_batch_status(batch_submit$id, conn)
 # bg_check <- batch_status_notify(batch_id = batch_submit$id, db_path = db_path)
@@ -100,31 +74,28 @@ assignments <- dbReviewAssignment(
 
 tbl(conn, "review_assignment") |> filter(statusCode < 3)
 
-review_ids <- 10
+review_ids <- 4
+
 test <- llm_comp_extract_run(
   conn,
   review_ids = review_ids,
-  model = "gpt-5.1",
-  force = T
+  model = "gpt-5.1"
 )
 test <- llm_comp_score_run(
   conn,
   review_ids = review_ids,
-  model = "gpt-5.1",
-  force = T
+  model = "gpt-5.1"
 )
 
-dbGetEvals(28, conn)$evaluation |> cat()
 
+# ------------ human review ----
 
-rubric_parsing(conn, "inst/rubric.md", commit = F)
+dbReviewerHuman(conn, username = "test_user_1")
 
-tbl(conn, "competency")
-tbl(conn, "competency_diff")
-tbl(conn, "score")
-
-dbRollback(conn)
-
-test <- prompt_generate(conn)
-
-test$score |> cat()
+assingments <- dbReviewAssignment(
+  conn,
+  reviewer_id = 2,
+  evaluation_id = 1:3,
+  redacted = T,
+  include_questions = T
+)

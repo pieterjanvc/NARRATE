@@ -821,7 +821,7 @@ dbReviewAssignment <- function(
       1
 
     if (human) {
-      prompt_ids <- prompt_id
+      prompt_ids <- ifelse(missing(prompt_id), NA, prompt_id)
     } else {
       prompt_ids <- c(
         ifelse(

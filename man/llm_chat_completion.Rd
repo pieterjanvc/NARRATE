@@ -2,7 +2,7 @@
 % Please edit documentation in R/llm.R
 \name{llm_chat_completion}
 \alias{llm_chat_completion}
-\title{Call an Azure chat completion LLM}
+\title{Call the Azure OpenAI chat completions API}
 \usage{
 llm_chat_completion(
   user,
@@ -17,26 +17,23 @@ llm_chat_completion(
 \arguments{
 \item{user}{User prompt}
 
-\item{system}{Default = "You are a helpful AI assistant". System prompt}
+\item{system}{System prompt. Default = "You are a helpful AI assistant"}
 
-\item{log}{If set, the token usage is kept track of in this CSV file}
+\item{log}{If set, token usage is appended to this CSV file}
 
-\item{model}{Default = gpt-4o-1120. LLM model to use}
+\item{model}{Default = gpt-4o-1120. Azure deployment name}
 
-\item{maxTokens}{Default = 500. Max Number of tokens to return}
+\item{maxTokens}{Default = 500. Maximum tokens to return}
 
-\item{version}{Default = 2024-10-21.}
+\item{version}{Default = 2024-10-21. API version}
 
-\item{endpoint}{Default = https://azure-ai.hms.edu. Azure endpoint}
+\item{endpoint}{Default = https://azure-ai.hms.edu. Azure endpoint base URL}
 }
 \value{
-LLM Response object (list).
-
-If a log file is et a line is added to a CSV file with columns
-timestamp, promptTokens and responseTokens (headers not included)
+Parsed response list
 }
 \description{
 Note that this function expects an environment variable HMS_AZURE_API
-that contains the API key You can set this up using
+that contains the API key. You can set this up using
 \code{Sys.setenv(HMS_AZURE_API = "API token here")}
 }
