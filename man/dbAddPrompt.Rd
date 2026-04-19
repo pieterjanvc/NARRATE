@@ -4,7 +4,7 @@
 \alias{dbAddPrompt}
 \title{Add a new prompt to the database}
 \usage{
-dbAddPrompt(prompt, conn, note, commit = T, showWarning = T)
+dbAddPrompt(prompt, conn, note, task = NULL, commit = T, showWarning = T)
 }
 \arguments{
 \item{prompt}{Single string of system prompt text}

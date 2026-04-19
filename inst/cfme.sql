@@ -72,40 +72,70 @@ CREATE TABLE "reviewer" (
   "note" TEXT
 );
 
-CREATE TABLE "review_prompt" (
+CREATE TABLE "prompt" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "task" TEXT,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   "hash" TEXT UNIQUE NOT NULL,
   "prompt" TEXT,
   "note" TEXT
 );
 
+CREATE TABLE "batch" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "file_input_id" TEXT,
+  "prompt_id" INTEGER,
+  "batch_id" TEXT,
+  "file_output_id" TEXT,  
+  "created" TEXT DEFAULT (datetime('now', 'localtime')),
+  "checked" TEXT,
+  "finished" TEXT,
+  "statusCode" INTEGER NOT NULL,
+  "n_requests" INTEGER,
+  "tokens_in" INTEGER,
+  "tokens_out" INTEGER,
+  "note" TEXT,
+  FOREIGN KEY ("prompt_id") REFERENCES "prompt"("id") ON DELETE CASCADE
+);
+
 CREATE TABLE "review_assignment" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "created" TEXT DEFAULT (datetime('now', 'localtime')),
   "modified" TEXT DEFAULT (datetime('now', 'localtime')),
-  "evaluation_id" INTEGER NOT NULL,
-  "review_prompt_id" INTEGER NOT NULL,
+  "evaluation_id" INTEGER NOT NULL,  
   "reviewer_id" INTEGER NOT NULL,
   "statusCode" INTEGER NOT NULL,
   "include_questions" INTEGER,
   "redacted" INTEGER,
   "utility" INTEGER,
   "sentiment" INTEGER,
+  "prompt_id" INTEGER,
+  "prompt_extract_id" INTEGER,
+  "prompt_score_id" INTEGER,
   "tokens_in" INTEGER,
   "tokens_out" INTEGER,
   "duration" REAL,
   "note" TEXT,
   FOREIGN KEY ("evaluation_id") REFERENCES "evaluation"("id") ON DELETE CASCADE,
-  FOREIGN KEY ("review_prompt_id") REFERENCES "review_prompt"("id") ON DELETE CASCADE,
-  FOREIGN KEY ("reviewer_id") REFERENCES "reviewer"("id") ON DELETE CASCADE
+  FOREIGN KEY ("prompt_id") REFERENCES "prompt"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("reviewer_id") REFERENCES "reviewer"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("prompt_extract_id") REFERENCES "prompt"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("prompt_score_id") REFERENCES "prompt"("id") ON DELETE CASCADE
+);
+
+CREATE TABLE "batch_review" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "batch_id" INTEGER NOT NULL,
+  "review_assignment_id" INTEGER NOT NULL,  
+  FOREIGN KEY ("batch_id") REFERENCES "batch"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
 );
 
 CREATE TABLE "competency_score" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "review_assignment_id" INTEGER NOT NULL,
   "competency_id" INTEGER NOT NULL,
-  "specificity" INTEGER NOT NULL,
+  "specificity" INTEGER,
   "note" TEXT,
   FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
 );

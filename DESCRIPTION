@@ -18,9 +18,13 @@ Suggests:
   keyring
 Imports:
   bslib,
+  callr,
   dplyr,
   DT,
+  ggplot2,
+  here,
   httr2,
+  jsonlite,
   pins,
   rlang,
   RSQLite,

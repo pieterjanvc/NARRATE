@@ -283,13 +283,13 @@ llm_review <- function(
   }
 
   # Get all unique prompts needed
-  prompts <- tbl(conn, "review_prompt") |>
-    filter(id %in% local(unique(assignments$review_prompt_id))) |>
+  prompts <- tbl(conn, "prompt") |>
+    filter(id %in% local(unique(assignments$prompt_id))) |>
     select(id, prompt) |>
     collect()
 
   evals <- assignments |>
-    select(id, evaluation_id, review_prompt_id, model) |>
+    select(id, evaluation_id, prompt_id, model) |>
     left_join(
       dbGetEvals(
         ids = assignments$evaluation_id,
@@ -311,7 +311,7 @@ llm_review <- function(
             result <- llm_chat_completion(
               user = evals$evaluation[j],
               system = prompts |>
-                filter(id == evals$review_prompt_id[j]) |>
+                filter(id == evals$prompt_id[j]) |>
                 pull(prompt),
               model = evals$model[j]
             )
@@ -325,7 +325,7 @@ llm_review <- function(
             result <- llm_responses(
               input = evals$evaluation[j],
               instructions = prompts |>
-                filter(id == evals$review_prompt_id[j]) |>
+                filter(id == evals$prompt_id[j]) |>
                 pull(prompt),
               model = evals$model[j]
             )

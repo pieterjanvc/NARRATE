@@ -377,18 +377,18 @@ server <- function(input, output, session) {
       tabStatusIcon("submit", submitStatus, session = session)
 
       # Check if the eval was already reviewed and use the same prompt version
-      review_prompt_id <- review_assingment$review_prompt_id
+      prompt_id <- review_assingment$prompt_id
 
       # Otherwise use the latest prompt version
-      if (length(review_prompt_id) == 0) {
-        review_prompt_id <- tbl(conn, "review_prompt") |>
+      if (length(prompt_id) == 0) {
+        prompt_id <- tbl(conn, "prompt") |>
           filter(id == max(id)) |>
           pull(id)
       }
 
       # Get the prompt text and parse it
-      text <- tbl(conn, "review_prompt") |>
-        filter(id == review_prompt_id) |>
+      text <- tbl(conn, "prompt") |>
+        filter(id == prompt_id) |>
         pull(prompt)
       parsed <- parsePrompt(text)
 
@@ -792,8 +792,8 @@ server <- function(input, output, session) {
       )
 
     prompt <- parsePrompt(
-      tbl(conn, "review_prompt") |>
-        filter(id == local(max(overall$review_prompt_id))) |>
+      tbl(conn, "prompt") |>
+        filter(id == local(max(overall$prompt_id))) |>
         pull(prompt)
     )
 

@@ -129,7 +129,8 @@ getFunArgs <- function(exclude) {
 #' @param gitHubBranch CFME branch
 #' @param dev Deploy to dev app
 #'
-#' @import shiny DT bslib
+#' @import shiny bslib
+#' @importFrom DT DTOutput renderDT datatable
 #' @importFrom tidyr pivot_wider
 #'
 #' @returns Nothing
@@ -282,4 +283,94 @@ pin_dev_set <- function(
   # Only keep n backups
   pin_versions_prune(board, newPin, n = nBackups)
   return(newPin)
+}
+
+#' Monitor a batch job and send a PushOver notification when complete
+#'
+#' @param batch_id ID of the batch to monitor
+#' @param db_path Path to the SQLite database
+#' @param feq_sec (Default = 60) Polling interval in seconds
+#' @param max_wait (Default = 2 hours) Maximum time in seconds before killing the process
+#'
+#' @import callr keyring
+#'
+#' @returns Invisibly returns the background process handle (callr r_bg object)
+#'
+batch_status_notify <- function(
+  batch_id,
+  db_path,
+  feq_sec = 60,
+  max_wait = 2 * 3600
+) {
+  auth <- keyring::key_get("PUSHOVER_API", "default") |> jsonlite::fromJSON()
+
+  bg <- callr::r_bg(
+    func = function(batch_id, db_path, feq_sec, max_wait, auth) {
+      conn <- sqlife::dbGetConn(db_path)
+
+      start_time <- Sys.time()
+
+      tryCatch(
+        {
+          repeat {
+            elapsed <- as.numeric(difftime(
+              Sys.time(),
+              start_time,
+              units = "secs"
+            ))
+            if (elapsed >= max_wait) {
+              dbFinish(conn)
+              httr2::request(auth$url) |>
+                httr2::req_body_form(
+                  token = auth$key,
+                  user = auth$user,
+                  message = paste("LLM batch", batch_id, "timed out")
+                ) |>
+                httr2::req_perform()
+              break
+            }
+
+            batch_info <- CFME::llm_batch_status(batch_id, conn)
+
+            if (batch_info$statusCode == 3) {
+              httr2::request(auth$url) |>
+                httr2::req_body_form(
+                  token = auth$key,
+                  user = auth$user,
+                  message = paste("LLM batch", batch_id, "finished")
+                ) |>
+                httr2::req_perform()
+
+              break
+            }
+
+            Sys.sleep(feq_sec)
+          }
+        },
+        error = function(e) {
+          httr2::request(auth$url) |>
+            httr2::req_body_form(
+              token = auth$key,
+              user = auth$user,
+              message = paste(
+                "LLM batch",
+                batch_id,
+                "error:",
+                conditionMessage(e)
+              )
+            ) |>
+            httr2::req_perform()
+        }
+      )
+    },
+    args = list(
+      batch_id = batch_id,
+      db_path = db_path,
+      feq_sec = feq_sec,
+      max_wait = max_wait,
+      auth = auth
+    )
+  )
+
+  invisible(bg)
 }
