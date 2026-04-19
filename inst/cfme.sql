@@ -131,13 +131,44 @@ CREATE TABLE "batch_review" (
   FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
 );
 
+CREATE TABLE "competency" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "cID" INTEGER NOT NULL,
+  "name" TEXT NOT NULL,
+  "description" TEXT NOT NULL,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  "note" TEXT
+);
+
+CREATE TABLE "competency_diff" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "competency_id1" INTEGER NOT NULL,
+  "competency_id2" INTEGER,
+  "description" TEXT NOT NULL,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  "note" TEXT,
+  FOREIGN KEY ("competency_id1") REFERENCES "competency"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("competency_id2") REFERENCES "competency"("id") ON DELETE CASCADE
+);
+
+CREATE TABLE "score" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "category" TEXT NOT NULL,
+  "value" TEXT NOT NULL,
+  "description" TEXT NOT NULL,
+  "example" TEXT,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  "note" TEXT
+);
+
 CREATE TABLE "competency_score" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "review_assignment_id" INTEGER NOT NULL,
   "competency_id" INTEGER NOT NULL,
   "specificity" INTEGER,
   "note" TEXT,
-  FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
+  FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("competency_id") REFERENCES "competency"("id") ON DELETE CASCADE
 );
 
 CREATE TABLE "competency_text" (

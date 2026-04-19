@@ -1,7 +1,8 @@
 # ARGUMENTS
 # *********
 seed <- 20260414
-db_path <- "local/batch_test.db"
+db_path <- "local/clean_up.db"
+# file.remove(db_path)
 dbSetup(db_path, "inst/cfme.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
 conn <- dbGetConn(db_path)
@@ -16,11 +17,8 @@ combined_data <- readxl::read_xlsx(
 . <- dbAddEvaluations(combined_data, db_path, redactedOnly = T)
 # Add default AI reviewer
 . <- dbReviewerAI(conn, model = "gpt-5.1")
-# Add default prompt
-prompt <- readLines("inst/prompt_comp_extract.md") |> paste(collapse = "\n")
-prompt_extract_id <- dbAddPrompt(prompt, conn, task = "comp_extract")
-prompt <- readLines("inst/prompt_comp_score.md") |> paste(collapse = "\n")
-prompt_score_id <- dbAddPrompt(prompt, conn, task = "comp_score")
+# Process the rubric and generate prompts
+rubric_process(conn)
 
 # Assign the same n random to the AI
 set.seed(seed)
@@ -117,3 +115,16 @@ test <- llm_comp_score_run(
 )
 
 dbGetEvals(28, conn)$evaluation |> cat()
+
+
+rubric_parsing(conn, "inst/rubric.md", commit = F)
+
+tbl(conn, "competency")
+tbl(conn, "competency_diff")
+tbl(conn, "score")
+
+dbRollback(conn)
+
+test <- prompt_generate(conn)
+
+test$score |> cat()
