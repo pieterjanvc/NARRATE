@@ -4,7 +4,8 @@ library(dplyr)
 library(DT)
 library(sqlife)
 
-dbInfo <- "../local/clean_up.db"
+# dbInfo <- "../local/clean_up.db"
+dbInfo <- "/home/pj/Downloads/batch_test.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
@@ -125,7 +126,7 @@ server <- function(input, output, session) {
     )
 
   # Populate the dropdown with AI-completed review assignments
-  ai_reviews <- tbl(conn, "review_assignment") |>
+  ai_reviews <<- tbl(conn, "review_assignment") |>
     filter(statusCode %in% ai_complete_codes) |>
     inner_join(
       tbl(conn, "reviewer") |>
@@ -173,18 +174,21 @@ server <- function(input, output, session) {
         1
       ),
       label = sprintf(
-        "[%.1f] %s%s",
+        "[%.1f] %s%s - ID %i",
         total_score,
         evaluator,
-        ifelse(summary_flg == 1L, " (Summary)", "")
+        ifelse(summary_flg == 1L, " (Summary)", ""),
+        evaluation_id
       )
     ) |>
     arrange(desc(total_score))
 
+  random_sel <- sample(1:nrow(ai_reviews), 100) |> sort()
+
   updateSelectInput(
     session,
     "reviewID",
-    choices = setNames(ai_reviews$id, ai_reviews$label)
+    choices = setNames(ai_reviews$id[random_sel], ai_reviews$label[random_sel])
   )
 
   # Reactive: fetch all data for the selected review

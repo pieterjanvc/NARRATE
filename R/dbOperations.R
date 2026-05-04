@@ -492,15 +492,23 @@ dbReviewUpdate <- function(
   tbl_delete(toDelete, conn, "competency_score", commit = F, returnData = F)
 
   # Add new results
-  compScores <- tbl_insert(compScores, conn, "competency_score", commit = F)
+  newScores <- tbl_insert(compScores, conn, "competency_score", commit = F)
   compText <- compText |>
     left_join(
-      compScores |>
+      newScores |>
         select(competency_score_id = id, review_assignment_id, competency_id),
       by = c("review_assignment_id", "competency_id")
     ) |>
     select(competency_score_id, text_match)
-  compText <- tbl_insert(compText, conn, "competency_text", commit = commit)
+  tbl_insert(compText, conn, "competency_text", commit = commit)
+
+  # Return all scores for this review, not just the newly inserted row
+  compScores <- tbl(conn, "competency_score") |>
+    filter(review_assignment_id %in% local(overallScores$id)) |>
+    collect()
+  compText <- tbl(conn, "competency_text") |>
+    filter(competency_score_id %in% local(compScores$id)) |>
+    collect()
 
   return(list(
     overallScores = overallScores,

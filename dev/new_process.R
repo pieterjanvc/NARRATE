@@ -1,7 +1,7 @@
 # ARGUMENTS
 # *********
-seed <- 20260414
-db_path <- "local/clean_up.db"
+seed <- 20260504
+db_path <- "local/cfme.db"
 # file.remove(db_path)
 dbSetup(db_path, "inst/cfme.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
@@ -17,6 +17,7 @@ combined_data <- readxl::read_xlsx(
 . <- dbAddEvaluations(combined_data, db_path, redactedOnly = T)
 # Add default AI reviewer
 . <- dbReviewerAI(conn, model = "gpt-5.1")
+. <- dbReviewerHuman(conn, username = c("TK", "AW", "KM", "PJ"))
 # Process the rubric and generate prompts
 rubric_process(conn)
 
@@ -30,13 +31,19 @@ evalSample <-
   slice_sample(n = 3) |>
   pull(id)
 
-assingments <- dbReviewAssignment(
-  conn,
-  reviewer_id = 1,
-  evaluation_id = evalSample,
-  redacted = T,
-  include_questions = T
-)
+# Assign the same random to reviewers
+evalSample <- c(1115, 336, 1577, 937)
+
+for (i in 2:5) {
+  assingments <- dbReviewAssignment(
+    conn,
+    reviewer_id = i,
+    evaluation_id = evalSample,
+    redacted = T,
+    include_questions = T
+  )
+}
+
 
 review_ids <- 1:3
 review_ids <- tbl(conn, "review_assignment") |>

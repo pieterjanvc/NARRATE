@@ -386,9 +386,10 @@ batch_status_notify <- function(
 status_codes <- function(conn, table = NULL) {
   q <- tbl(conn, "status_codes")
   if (!is.null(table)) {
+    tbl_filter <- table  # avoid name collision with the "table" column in dplyr mask
     q <- filter(
       q,
-      .data[["table"]] == table | .data[["function"]] == table
+      .data[["table"]] == tbl_filter | .data[["function"]] == tbl_filter
     )
   }
   collect(q) |>
