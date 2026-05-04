@@ -27,7 +27,7 @@ each element has cID (integer) and text (character vector)}
 \value{
 List with:
 \itemize{
-\item statusCode: 0 = API error, 1 = parse error, 2 = success
+\item statusCode: run status_codes(conn, "llm_comp_score") for code details
 \item data: list with competencies, utility and sentiment on success, NULL otherwise
 \item tokens_in, tokens_out: integer token counts
 \item raw: raw response text if debug = TRUE, otherwise NULL
