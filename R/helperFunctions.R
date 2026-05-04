@@ -374,3 +374,24 @@ batch_status_notify <- function(
 
   invisible(bg)
 }
+
+#' Look up status codes for a database table or function
+#'
+#' @param conn CFME database connection
+#' @param table Name of a database table or function to filter by (optional)
+#'
+#' @import dplyr
+#' @returns Data frame of matching status codes
+#' @export
+status_codes <- function(conn, table = NULL) {
+  q <- tbl(conn, "status_codes")
+  if (!is.null(table)) {
+    q <- filter(
+      q,
+      .data[["table"]] == table | .data[["function"]] == table
+    )
+  }
+  collect(q) |>
+    select(-id) |>
+    arrange(.data[["table"]], .data[["function"]], code)
+}

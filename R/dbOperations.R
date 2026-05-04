@@ -407,7 +407,7 @@ dbAddPrompt <- function(
 #' Insert or update into review score table
 #'
 #' @param conn CFME database connection
-#' @param statusCode Set the review status (0 = new,1 = in progress,2 = complete, -1 = flagged)
+#' @param statusCode Set the review_assignment status; run status_codes(conn, "review_assignment") for code details
 #' @param overallScores Data frame matching review_assignment table which
 #' contains the overall scores
 #' @param compScores Data frame matching competency_scores table (new IDs will be generated)

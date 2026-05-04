@@ -55,7 +55,7 @@ llm_comp_extract_run <- function(
       endpoint = endpoint
     )
 
-    new_status <- if (result$statusCode == 2) 3L else -1L
+    new_status <- if (result$statusCode == 2) 3L else -2L
 
     if (result$statusCode == 2 && length(result$data) > 0) {
       dbCompExtraction(conn, rid, result$data, commit = FALSE)
@@ -128,7 +128,7 @@ llm_comp_score_run <- function(
       endpoint = endpoint
     )
 
-    new_status <- if (result$statusCode == 2) 5L else -1L
+    new_status <- if (result$statusCode == 2) 5L else -3L
 
     if (result$statusCode == 2) {
       db_write_score_specificity(conn, rid, result$data$competencies, commit = FALSE)
@@ -286,7 +286,7 @@ batch_extract_process <- function(batch_id, conn) {
   to_update <- lapply(results, "[", c("review_id", "statusCode", "tokens_in", "tokens_out")) |>
     bind_rows() |>
     mutate(
-      statusCode = ifelse(statusCode == 2, 3L, -1L),
+      statusCode = ifelse(statusCode == 2, 3L, -2L),
       modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     ) |>
     rename(id = review_id)
@@ -342,7 +342,7 @@ batch_score_process <- function(batch_id, conn) {
   to_update <- lapply(results, function(r) {
     data.frame(
       id = r$review_id,
-      statusCode = if (r$statusCode == 2) 5L else -1L,
+      statusCode = if (r$statusCode == 2) 5L else -3L,
       tokens_in = r$tokens_in,
       tokens_out = r$tokens_out,
       utility = if (r$statusCode == 2) r$data$utility else NA_integer_,
