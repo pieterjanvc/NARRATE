@@ -8,7 +8,7 @@ library(DT)
 library(sqlife)
 
 
-dbInfo <- "../local/clean_up.db"
+dbInfo <- "../local/cfme_new.db"
 # dbInfo <- "../local/cfme.db"
 # dbInfo <- "~/Downloads/cfme.db"
 
@@ -214,16 +214,9 @@ server <- function(input, output, session) {
     arrange(cID) |>
     collect()
 
-  scores_db <- tbl(conn, "score") |> collect()
-  specificity_opts <- scores_db |>
-    filter(category == "Specificity") |>
-    arrange(as.integer(value))
-  utility_opts <- scores_db |>
-    filter(category == "Utility") |>
-    arrange(as.integer(value))
-  sentiment_opts <- scores_db |>
-    filter(category == "Sentiment") |>
-    arrange(as.integer(value))
+  specificity_opts <- tbl(conn, "specificity") |> collect() |> arrange(as.integer(value))
+  utility_opts     <- tbl(conn, "utility")     |> collect() |> arrange(as.integer(value))
+  sentiment_opts   <- tbl(conn, "sentiment")   |> collect() |> arrange(as.integer(value))
 
   # Helper: named vector of integer value → "N - description" label
   score_choices <- function(opts) {
@@ -396,7 +389,7 @@ server <- function(input, output, session) {
         submitStatus <- 2
       } else {
         compStatus <- nrow(compScores) > 0 + reviewStatus
-        overallStatus <- !is.na(review_assingment$utility) + reviewStatus
+        overallStatus <- !is.na(review_assingment$utility_score_value) + reviewStatus
         submitStatus <- compStatus & overallStatus + reviewStatus
       }
 
@@ -423,20 +416,20 @@ server <- function(input, output, session) {
         inputId = "util",
         label = "Utility score",
         choices = score_choices(utility_opts),
-        selected = if (is.na(review_assingment$utility)) {
+        selected = if (is.na(review_assingment$utility_score_value)) {
           character(0)
         } else {
-          review_assingment$utility
+          review_assingment$utility_score_value
         }
       )
       updateRadioButtons(
         inputId = "sent",
         label = "Sentiment score",
         choices = score_choices(sentiment_opts),
-        selected = if (is.na(review_assingment$sentiment)) {
+        selected = if (is.na(review_assingment$sentiment_score_value)) {
           character(0)
         } else {
-          review_assingment$sentiment
+          review_assingment$sentiment_score_value
         }
       )
 
@@ -611,8 +604,10 @@ server <- function(input, output, session) {
 
     overallScores <- data.frame(
       id = as.integer(input$reviewID),
-      utility = as.integer(input$util),
-      sentiment = as.integer(input$sent),
+      utility_score_id    = utility_opts$id[utility_opts$value == input$util],
+      utility_score_value = as.integer(input$util),
+      sentiment_score_id    = sentiment_opts$id[sentiment_opts$value == input$sent],
+      sentiment_score_value = as.integer(input$sent),
       note = str_trim(input$reviewComment)
     )
 
@@ -673,9 +668,9 @@ server <- function(input, output, session) {
         rownames = FALSE
       ),
       tags$b("UTILITY"),
-      p(util_lookup[as.character(overallScores$utility)]),
+      p(util_lookup[as.character(overallScores$utility_score_value)]),
       tags$b("SENTIMENT"),
-      p(sent_lookup[as.character(overallScores$sentiment)]),
+      p(sent_lookup[as.character(overallScores$sentiment_score_value)]),
       tags$hr()
     )
   })
@@ -684,8 +679,8 @@ server <- function(input, output, session) {
   observeEvent(input$complete, {
     if (
       (nrow(reviewScores()$compScores) == 0 ||
-        is.na(reviewScores()$overallScores$utility) ||
-        is.na(reviewScores()$overallScores$sentiment)) &
+        is.na(reviewScores()$overallScores$utility_score_value) ||
+        is.na(reviewScores()$overallScores$sentiment_score_value)) &
         !input$flag
     ) {
       showModal(modalDialog(
@@ -804,11 +799,11 @@ server <- function(input, output, session) {
       as.integer(specificity_opts$value)
     )
     util_df <- data.frame(
-      utility = as.integer(utility_opts$value),
+      utility_score_value = as.integer(utility_opts$value),
       util = utility_opts$description
     )
     sent_df <- data.frame(
-      sentiment = as.integer(sentiment_opts$value),
+      sentiment_score_value = as.integer(sentiment_opts$value),
       sent = sentiment_opts$description
     )
     comp_metric <- data.frame(
@@ -839,7 +834,7 @@ server <- function(input, output, session) {
         left_join(comp_metric, by = "competency_id") |>
         select(-competency_id),
       info$overall |>
-        select(utility, sentiment, note) |>
+        select(utility_score_value, sentiment_score_value, note) |>
         mutate(
           note = ifelse(
             is.na(note),
@@ -847,8 +842,8 @@ server <- function(input, output, session) {
             sprintf("<i style='color:#e04233;'>%s<i>", note)
           )
         ) |>
-        left_join(util_df, by = "utility") |>
-        left_join(sent_df, by = "sentiment") |>
+        left_join(util_df, by = "utility_score_value") |>
+        left_join(sent_df, by = "sentiment_score_value") |>
         select(util, sent, note) |>
         t() |>
         as.data.frame() |>

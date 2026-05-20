@@ -149,13 +149,18 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
     }
   }
 
-  score_df <- data.frame(
-    category = score_categories,
-    value = score_values,
-    description = score_descs,
-    example = score_examples,
-    stringsAsFactors = FALSE
-  )
+  make_score_df <- function(cat) {
+    idx <- score_categories == cat
+    data.frame(
+      value = score_values[idx],
+      description = score_descs[idx],
+      example = score_examples[idx],
+      stringsAsFactors = FALSE
+    )
+  }
+  specificity_df <- make_score_df("Specificity")
+  utility_df     <- make_score_df("Utility")
+  sentiment_df   <- make_score_df("Sentiment")
 
   # --- Insert (skip rows whose content has not changed) ---
   existing_comp <- tbl(conn, "competency") |>
@@ -201,22 +206,27 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
     tbl_insert(to_insert_diff, conn, "competency_diff", commit = commit)
   }
 
-  existing_score <- tbl(conn, "score") |>
-    select(category, value, description, example) |>
-    collect()
-  to_insert_score <- anti_join(
-    score_df,
-    existing_score,
-    by = c("category", "value", "description", "example")
-  )
-  if (nrow(to_insert_score) > 0) {
-    tbl_insert(to_insert_score, conn, "score", commit = commit)
+  insert_score_table <- function(df, table_name) {
+    existing <- tbl(conn, table_name) |>
+      select(value, description, example) |>
+      collect()
+    to_insert <- anti_join(df, existing, by = c("value", "description", "example"))
+    if (nrow(to_insert) > 0) {
+      tbl_insert(to_insert, conn, table_name, commit = commit)
+    }
+    to_insert
   }
 
+  to_insert_specificity <- insert_score_table(specificity_df, "specificity")
+  to_insert_utility     <- insert_score_table(utility_df,     "utility")
+  to_insert_sentiment   <- insert_score_table(sentiment_df,   "sentiment")
+
   invisible(list(
-    competency = to_insert_comp,
+    competency    = to_insert_comp,
     competency_diff = to_insert_diff,
-    score = to_insert_score
+    specificity   = to_insert_specificity,
+    utility       = to_insert_utility,
+    sentiment     = to_insert_sentiment
   ))
 }
 

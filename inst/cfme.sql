@@ -104,23 +104,23 @@ CREATE TABLE "review_assignment" (
   "modified" TEXT DEFAULT (datetime('now', 'localtime')),
   "evaluation_id" INTEGER NOT NULL,  
   "reviewer_id" INTEGER NOT NULL,
+  "rubric_id" INTEGER NOT NULL,
   "statusCode" INTEGER NOT NULL,
   "include_questions" INTEGER,
   "redacted" INTEGER,
-  "utility" INTEGER,
-  "sentiment" INTEGER,
-  "prompt_id" INTEGER,
-  "prompt_extract_id" INTEGER,
-  "prompt_score_id" INTEGER,
+  "utility_score_id" INTEGER,
+  "utility_score_value" INTEGER,
+  "sentiment_score_id" INTEGER,
+  "sentiment_score_value" INTEGER,
   "tokens_in" INTEGER,
   "tokens_out" INTEGER,
   "duration" REAL,
   "note" TEXT,
   FOREIGN KEY ("evaluation_id") REFERENCES "evaluation"("id") ON DELETE CASCADE,
-  FOREIGN KEY ("prompt_id") REFERENCES "prompt"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("rubric_id") REFERENCES "rubric"("id") ON DELETE CASCADE,
   FOREIGN KEY ("reviewer_id") REFERENCES "reviewer"("id") ON DELETE CASCADE,
-  FOREIGN KEY ("prompt_extract_id") REFERENCES "prompt"("id") ON DELETE CASCADE,
-  FOREIGN KEY ("prompt_score_id") REFERENCES "prompt"("id") ON DELETE CASCADE
+  FOREIGN KEY ("utility_score_id") REFERENCES "utility"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("sentiment_score_id") REFERENCES "sentiment"("id") ON DELETE CASCADE
 );
 
 CREATE TABLE "batch_review" (
@@ -129,6 +129,16 @@ CREATE TABLE "batch_review" (
   "review_assignment_id" INTEGER NOT NULL,  
   FOREIGN KEY ("batch_id") REFERENCES "batch"("id") ON DELETE CASCADE,
   FOREIGN KEY ("review_assignment_id") REFERENCES "review_assignment"("id") ON DELETE CASCADE
+);
+
+CREATE TABLE "rubric" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "prompt_extract_id" INTEGER,
+  "prompt_score_id" INTEGER,
+  "info" TEXT,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  FOREIGN KEY ("prompt_extract_id") REFERENCES "prompt"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("prompt_score_id") REFERENCES "prompt"("id") ON DELETE CASCADE
 );
 
 CREATE TABLE "competency" (
@@ -151,14 +161,81 @@ CREATE TABLE "competency_diff" (
   FOREIGN KEY ("competency_id2") REFERENCES "competency"("id") ON DELETE CASCADE
 );
 
-CREATE TABLE "score" (
+CREATE TABLE "rubric_competency" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "category" TEXT NOT NULL,
+  "rubric_id" INTEGER NOT NULL,
+  "competency_id" INTEGER NOT NULL,
+  "order" INTEGER NOT NULL,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  FOREIGN KEY ("rubric_id") REFERENCES "rubric"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("competency_id") REFERENCES "competency"("id") ON DELETE CASCADE
+);
+
+-- CREATE TABLE "score" (
+--   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+--   "category" TEXT NOT NULL,
+--   "value" TEXT NOT NULL,
+--   "description" TEXT NOT NULL,
+--   "example" TEXT,
+--   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+--   "note" TEXT
+-- );
+
+CREATE TABLE "specificity" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "value" TEXT NOT NULL,
   "description" TEXT NOT NULL,
   "example" TEXT,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   "note" TEXT
+);
+
+CREATE TABLE "rubric_specificity" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "rubric_id" INTEGER NOT NULL,
+  "specificity_id" INTEGER NOT NULL,
+  "order" INTEGER NOT NULL,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  FOREIGN KEY ("rubric_id") REFERENCES "rubric"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("specificity_id") REFERENCES "specificity"("id") ON DELETE CASCADE
+);
+
+CREATE TABLE "utility" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "value" TEXT NOT NULL,
+  "description" TEXT NOT NULL,
+  "example" TEXT,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  "note" TEXT
+);
+
+CREATE TABLE "rubric_utility" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "rubric_id" INTEGER NOT NULL,
+  "utility_id" INTEGER NOT NULL,
+  "order" INTEGER NOT NULL,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  FOREIGN KEY ("rubric_id") REFERENCES "rubric"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("utility_id") REFERENCES "utility"("id") ON DELETE CASCADE
+);
+
+CREATE TABLE "sentiment" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "value" TEXT NOT NULL,
+  "description" TEXT NOT NULL,
+  "example" TEXT,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  "note" TEXT
+);
+
+CREATE TABLE "rubric_sentiment" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "rubric_id" INTEGER NOT NULL,
+  "sentiment_id" INTEGER NOT NULL,
+  "order" INTEGER NOT NULL,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  FOREIGN KEY ("rubric_id") REFERENCES "rubric"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("sentiment_id") REFERENCES "sentiment"("id") ON DELETE CASCADE
 );
 
 CREATE TABLE "competency_score" (
