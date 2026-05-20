@@ -56,7 +56,7 @@ llm_build_score_body <- function(extractions, prompt) {
 #' @import httr2
 #' @importFrom jsonlite fromJSON
 #' @returns List with:
-#'   - statusCode: 0 = API error, 1 = parse error, 2 = success
+#'   - statusCode: run status_codes(conn, "llm_comp_extract") for code details
 #'   - data: list of extraction items on success (each has cID and text), NULL otherwise
 #'   - tokens_in, tokens_out: integer token counts
 #'   - raw: raw response text if debug = TRUE, otherwise NULL
@@ -132,7 +132,7 @@ llm_comp_extract <- function(
 #' @import httr2
 #' @importFrom jsonlite fromJSON toJSON
 #' @returns List with:
-#'   - statusCode: 0 = API error, 1 = parse error, 2 = success
+#'   - statusCode: run status_codes(conn, "llm_comp_score") for code details
 #'   - data: list with competencies, utility and sentiment on success, NULL otherwise
 #'   - tokens_in, tokens_out: integer token counts
 #'   - raw: raw response text if debug = TRUE, otherwise NULL
@@ -452,7 +452,7 @@ llm_batch_status <- function(
 #' @importFrom stringr str_extract
 #' @returns Named list (one element per custom_id) with:
 #'   - review_id: integer extracted from the custom_id
-#'   - statusCode: -1 = missing, -2 = parse error, 2 = success
+#'   - statusCode: run status_codes(conn, "batch_results_preprocess") for code details
 #'   - data: parsed JSON object on success, NULL otherwise
 #'   - tokens_in, tokens_out: integer token counts
 batch_results_preprocess <- function(file_output_id) {

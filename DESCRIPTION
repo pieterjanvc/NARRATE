@@ -1,6 +1,6 @@
 Package: CFME
 Title: Core Faculty Model Evaluation
-Version: 0.0.0.9000
+Version: 0.0.0.9001
 Authors@R: 
     person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
 Description: What the package does (one paragraph).
@@ -14,8 +14,7 @@ Suggests:
   devtools,
   roxygen2,
   packrat,
-  rsconnect,
-  keyring
+  rsconnect
 Imports:
   bslib,
   callr,
@@ -25,6 +24,7 @@ Imports:
   here,
   httr2,
   jsonlite,
+  keyring,
   pins,
   rlang,
   RSQLite,

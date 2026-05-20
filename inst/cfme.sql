@@ -254,3 +254,47 @@ CREATE TABLE "competency_text" (
   "text_match" TEXT NOT NULL,
   FOREIGN KEY ("competency_score_id") REFERENCES "competency_score"("id") ON DELETE CASCADE
 );
+
+CREATE TABLE "status_codes" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "table" TEXT,
+  "function" TEXT,
+  "code" INTEGER NOT NULL,
+  "description" TEXT NOT NULL,
+  "note" TEXT
+);
+
+INSERT INTO "status_codes" ("table", "code", "description", "note") VALUES
+  -- review_assignment: shared (human + AI)
+  ('review_assignment', -1, 'Completed with flag',        'Human reviewer flagged'),
+  ('review_assignment',  0, 'New',                        NULL),
+  ('review_assignment',  1, 'In progress',                'Human: reviewer started; AI: extraction submitted to batch'),
+  ('review_assignment',  2, 'Completed',                  'Human completion or legacy single-call AI'),
+  -- review_assignment: AI batch only
+  ('review_assignment', -2, 'AI extraction failed',       NULL),
+  ('review_assignment', -3, 'AI scoring failed',          NULL),
+  ('review_assignment',  3, 'Batch extraction complete',  NULL),
+  ('review_assignment',  4, 'Batch scoring submitted',    NULL),
+  ('review_assignment',  5, 'Batch scoring complete',     NULL),
+  -- batch
+  ('batch', -3, 'Cancelled',   NULL),
+  ('batch', -2, 'Expired',     NULL),
+  ('batch', -1, 'Failed',      NULL),
+  ('batch',  1, 'Submitted',   NULL),
+  ('batch',  2, 'In progress', NULL),
+  ('batch',  3, 'Completed',   NULL),
+  ('batch',  4, 'Processed',   NULL);
+
+INSERT INTO "status_codes" ("function", "code", "description") VALUES
+  -- llm_comp_extract return codes (not stored in DB)
+  ('llm_comp_extract',         0, 'API error'),
+  ('llm_comp_extract',         1, 'Parse error'),
+  ('llm_comp_extract',         2, 'Success'),
+  -- llm_comp_score return codes (not stored in DB)
+  ('llm_comp_score',           0, 'API error'),
+  ('llm_comp_score',           1, 'Parse error'),
+  ('llm_comp_score',           2, 'Success'),
+  -- batch_results_preprocess return codes (not stored in DB)
+  ('batch_results_preprocess', -1, 'Missing result'),
+  ('batch_results_preprocess', -2, 'Parse error'),
+  ('batch_results_preprocess',  2, 'Success');

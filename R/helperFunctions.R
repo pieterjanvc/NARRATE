@@ -146,10 +146,16 @@ deployShinyApp <- function(db, gitHubBranch, dev = F) {
   file.copy(db, file.path(root, "cfme.db"), overwrite = T)
   devtools::install_github(paste0("pieterjanvc/CFME@", gitHubBranch))
   # Add CFME to lock file
-  renv::record(
-    paste0("pieterjanvc/CFME@", gitHubBranch),
-    lockfile = file.path(root, "renv.lock")
-  )
+  lockfile <- file.path(root, "renv.lock")
+  renv::record(paste0("pieterjanvc/CFME@", gitHubBranch), lockfile = lockfile)
+  # renv::record() omits Imports, so packrat on Connect can't determine install
+  # order and fails. Patch the entry from the installed package's DESCRIPTION.
+  desc <- packageDescription("CFME")
+  imports <- trimws(strsplit(gsub("\n\\s*", " ", desc$Imports), ",")[[1]])
+  imports <- sub("\\s*\\(.*?\\)\\s*$", "", imports)
+  lock <- jsonlite::read_json(lockfile)
+  lock$Packages$CFME$Imports <- as.list(imports)
+  jsonlite::write_json(lock, lockfile, pretty = 2, auto_unbox = TRUE)
 }
 
 #' Backup and replace the DB using pins
@@ -373,4 +379,26 @@ batch_status_notify <- function(
   )
 
   invisible(bg)
+}
+
+#' Look up status codes for a database table or function
+#'
+#' @param conn CFME database connection
+#' @param table Name of a database table or function to filter by (optional)
+#'
+#' @import dplyr
+#' @returns Data frame of matching status codes
+#' @export
+status_codes <- function(conn, table = NULL) {
+  q <- tbl(conn, "status_codes")
+  if (!is.null(table)) {
+    tbl_filter <- table  # avoid name collision with the "table" column in dplyr mask
+    q <- filter(
+      q,
+      .data[["table"]] == tbl_filter | .data[["function"]] == tbl_filter
+    )
+  }
+  collect(q) |>
+    select(-id) |>
+    arrange(.data[["table"]], .data[["function"]], code)
 }

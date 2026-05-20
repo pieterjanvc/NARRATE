@@ -13,7 +13,7 @@ batch_results_preprocess(file_output_id)
 Named list (one element per custom_id) with:
 \itemize{
 \item review_id: integer extracted from the custom_id
-\item statusCode: -1 = missing, -2 = parse error, 2 = success
+\item statusCode: run status_codes(conn, "batch_results_preprocess") for code details
 \item data: parsed JSON object on success, NULL otherwise
 \item tokens_in, tokens_out: integer token counts
 }

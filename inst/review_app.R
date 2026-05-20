@@ -203,6 +203,32 @@ server <- function(input, output, session) {
   # DB Connection
   conn <- dbGetConn(dbInfo, session = session)
 
+  # review_assignment status codes loaded once; named vector + semantic aliases
+  ra_codes <- status_codes(conn, "review_assignment") |>
+    mutate(code = as.integer(code))
+  ra_code_desc <- setNames(ra_codes$description, ra_codes$code)
+  ra_new <- ra_codes$code[ra_codes$description == "New"]
+  ra_inprogress <- ra_codes$code[ra_codes$description == "In progress"]
+  ra_flagged <- ra_codes$code[ra_codes$description == "Completed with flag"]
+  ra_completed <- ra_codes$code[ra_codes$description == "Completed"]
+  ra_completed_label <- if (length(ra_completed) > 0L) {
+    unname(ra_code_desc[as.character(ra_completed[1L])])
+  } else {
+    "Completed"
+  }
+  ra_ai_done <- ra_codes$code[ra_codes$description == "Batch scoring complete"]
+  ra_batch_ext_done <- ra_codes$code[
+    ra_codes$description == "Batch extraction complete"
+  ]
+  ra_done_codes <- c(ra_flagged, ra_completed, ra_ai_done)
+  ra_display_codes <- c(
+    ra_flagged,
+    ra_new,
+    ra_inprogress,
+    ra_completed,
+    ra_ai_done
+  )
+
   # ── Rubric data ──────────────────────────────────────────────────────────────
   # Load once per session from the competency and score tables populated by
   # rubric_parsing(). These replace the old parsePrompt() approach.
@@ -214,9 +240,15 @@ server <- function(input, output, session) {
     arrange(cID) |>
     collect()
 
-  specificity_opts <- tbl(conn, "specificity") |> collect() |> arrange(as.integer(value))
-  utility_opts     <- tbl(conn, "utility")     |> collect() |> arrange(as.integer(value))
-  sentiment_opts   <- tbl(conn, "sentiment")   |> collect() |> arrange(as.integer(value))
+  specificity_opts <- tbl(conn, "specificity") |>
+    collect() |>
+    arrange(as.integer(value))
+  utility_opts <- tbl(conn, "utility") |>
+    collect() |>
+    arrange(as.integer(value))
+  sentiment_opts <- tbl(conn, "sentiment") |>
+    collect() |>
+    arrange(as.integer(value))
 
   # Helper: named vector of integer value → "N - description" label
   score_choices <- function(opts) {
@@ -255,7 +287,17 @@ server <- function(input, output, session) {
       arrange(
         match(
           statusCode,
-          c(1, 0, -1, 2, 5, setdiff(c(0:5, -1), unique(statusCode)))
+          c(
+            ra_inprogress,
+            ra_new,
+            ra_flagged,
+            ra_completed,
+            ra_ai_done,
+            setdiff(
+              ra_codes$code,
+              c(ra_inprogress, ra_new, ra_flagged, ra_completed, ra_ai_done)
+            )
+          )
         ),
         evaluation_id
       ) |>
@@ -266,25 +308,22 @@ server <- function(input, output, session) {
           ifelse(complete == 1, "complete", "incomplete"),
           ifelse(summary_flg == 1, "summative", "formative"),
           case_when(
-            statusCode == 0 ~ "New",
-            statusCode == 1 ~ "In progress",
-            statusCode %in% c(2, 5) ~ "Completed",
-            statusCode == -1 ~ "Completed with flag",
-            TRUE ~ "Error"
+            statusCode %in% c(ra_completed, ra_ai_done) ~ ra_completed_label,
+            TRUE ~ coalesce(ra_code_desc[as.character(statusCode)], "Error")
           )
         )
       )
 
     lblInfo <- reviews |>
-      filter(statusCode %in% c(-1, 0, 1, 2, 5)) |>
+      filter(statusCode %in% ra_display_codes) |>
       group_by(statusCode) |>
       summarise(n = n())
 
-    lblInfo <- data.frame(statusCode = c(-1, 0, 1, 2, 5)) |>
+    lblInfo <- data.frame(statusCode = ra_display_codes) |>
       left_join(lblInfo, by = "statusCode") |>
       mutate(n = ifelse(is.na(n), 0, n)) |>
       pull(n)
-    # lblInfo: [1]=-1 (flagged), [2]=0 (new), [3]=1 (in progress), [4]=2 (done), [5]=5 (AI done)
+    # lblInfo order matches ra_display_codes: flagged, new, in-progress, completed, ai-done
 
     updateSelectInput(
       session,
@@ -309,7 +348,7 @@ server <- function(input, output, session) {
     reviewID <- as.integer(input$reviewID)
 
     check <- tbl(conn, "review_assignment") |>
-      filter(id == reviewID, statusCode == 0) |>
+      filter(id == reviewID, statusCode == ra_new) |>
       inner_join(
         tbl(conn, "reviewer") |>
           select(reviewer_id = id, human) |>
@@ -340,7 +379,10 @@ server <- function(input, output, session) {
     extract_res <- llm_comp_extract_run(conn, review_ids = rid, force = TRUE)
 
     # Step 2: scoring (only if extraction succeeded)
-    if (!is.null(extract_res) && isTRUE(extract_res$statusCode == 3)) {
+    if (
+      !is.null(extract_res) &&
+        isTRUE(extract_res$statusCode == ra_batch_ext_done)
+    ) {
       llm_comp_score_run(conn, review_ids = rid, force = TRUE)
     }
 
@@ -352,12 +394,12 @@ server <- function(input, output, session) {
     updateReviewID(input$reviewID)
     forceRefresh(forceRefresh() + 1)
     showNotification(
-      if (isTRUE(final_status == 5)) {
+      if (isTRUE(final_status == ra_ai_done)) {
         "AI review complete"
       } else {
         "AI review failed"
       },
-      type = if (isTRUE(final_status == 5)) "message" else "error"
+      type = if (isTRUE(final_status == ra_ai_done)) "message" else "error"
     )
   })
 
@@ -381,7 +423,9 @@ server <- function(input, output, session) {
         filter(competency_score_id %in% local(compScores$id)) |>
         collect()
 
-      reviewStatus <- review_assingment$statusCode %in% c(-1, 2, 5)
+      req(nrow(review_assingment) == 1)
+
+      reviewStatus <- review_assingment$statusCode %in% ra_done_codes
 
       if (reviewStatus) {
         compStatus <- 2
@@ -389,7 +433,8 @@ server <- function(input, output, session) {
         submitStatus <- 2
       } else {
         compStatus <- nrow(compScores) > 0 + reviewStatus
-        overallStatus <- !is.na(review_assingment$utility_score_value) + reviewStatus
+        overallStatus <- !is.na(review_assingment$utility_score_value) +
+          reviewStatus
         submitStatus <- compStatus & overallStatus + reviewStatus
       }
 
@@ -441,13 +486,13 @@ server <- function(input, output, session) {
       # Submission tab
       updateCheckboxInput(
         inputId = "flag",
-        value = review_assingment$statusCode == -1
+        value = review_assingment$statusCode == ra_flagged
       )
 
       updateActionButton(
         inputId = "complete",
         label = ifelse(
-          review_assingment$statusCode %in% c(-1, 2, 5),
+          review_assingment$statusCode %in% ra_done_codes,
           "Resubmit",
           "Mark as complete"
         )
@@ -573,7 +618,7 @@ server <- function(input, output, session) {
 
     scores <- dbReviewUpdate(
       conn = conn,
-      statusCode = 1,
+      statusCode = ra_inprogress,
       compScores = compScores,
       compText = compText,
       removeNotListed = F,
@@ -588,6 +633,7 @@ server <- function(input, output, session) {
 
     tabStatusIcon("comp", 1, session = session)
     tabStatusIcon("submit", 1, session = session)
+    forceRefresh(forceRefresh() + 1)
     showNotification(sprintf("Competency updated"), type = "message")
   })
 
@@ -604,16 +650,18 @@ server <- function(input, output, session) {
 
     overallScores <- data.frame(
       id = as.integer(input$reviewID),
-      utility_score_id    = utility_opts$id[utility_opts$value == input$util],
+      utility_score_id = utility_opts$id[utility_opts$value == input$util],
       utility_score_value = as.integer(input$util),
-      sentiment_score_id    = sentiment_opts$id[sentiment_opts$value == input$sent],
+      sentiment_score_id = sentiment_opts$id[
+        sentiment_opts$value == input$sent
+      ],
       sentiment_score_value = as.integer(input$sent),
       note = str_trim(input$reviewComment)
     )
 
     scores <- dbReviewUpdate(
       conn = conn,
-      statusCode = 1,
+      statusCode = ra_inprogress,
       overallScores = overallScores,
       removeNotListed = F,
       commit = T
@@ -626,6 +674,7 @@ server <- function(input, output, session) {
 
     tabStatusIcon("overall", 1, session = session)
     tabStatusIcon("submit", 1, session = session)
+    forceRefresh(forceRefresh() + 1)
     showNotification(sprintf("Scores updated"), type = "message")
   })
 
@@ -692,8 +741,8 @@ server <- function(input, output, session) {
     }
 
     data <- data.frame(
-      id = input$reviewID,
-      statusCode = ifelse(input$flag, -1, 2)
+      id = as.integer(input$reviewID),
+      statusCode = ifelse(input$flag, ra_flagged, ra_completed)
     )
     tbl_update(data, conn, "review_assignment", returnData = F)
 
@@ -719,7 +768,7 @@ server <- function(input, output, session) {
     summarise(
       nAI = n() - sum(human),
       nHuman = sum(human),
-      nComplete = sum(statusCode %in% c(-1, 2, 5))
+      nComplete = sum(statusCode %in% local(ra_done_codes))
     ) |>
     ungroup() |>
     collect()
