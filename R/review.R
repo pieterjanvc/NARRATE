@@ -110,9 +110,11 @@ llm_comp_score_run <- function(
   if (is.null(review_info)) return(invisible(NULL))
 
   extractions <- db_fetch_extractions(conn, review_info$review_id)
+  score_maps  <- db_fetch_score_maps(conn, unique(review_info$rubric_id))
 
   results <- lapply(seq_len(nrow(review_info)), function(i) {
-    rid <- review_info$review_id[i]
+    rid      <- review_info$review_id[i]
+    maps     <- score_maps[[as.character(review_info$rubric_id[i])]]
     if (verbose) message("Scoring review ", rid, "...")
 
     rows <- extractions[extractions$review_assignment_id == rid, ]
@@ -134,14 +136,21 @@ llm_comp_score_run <- function(
       db_write_score_specificity(conn, rid, result$data$competencies, commit = FALSE)
     }
 
+    util_val <- if (result$statusCode == 2) result$data$utility else NA_integer_
+    sent_val <- if (result$statusCode == 2) result$data$sentiment else NA_integer_
+
     tbl_update(
       data.frame(
         id = rid,
         statusCode = new_status,
         tokens_in = result$tokens_in,
         tokens_out = result$tokens_out,
-        utility = if (result$statusCode == 2) result$data$utility else NA_integer_,
-        sentiment = if (result$statusCode == 2) result$data$sentiment else NA_integer_,
+        utility_score_value = util_val,
+        utility_score_id = if (is.na(util_val)) NA_integer_ else
+          maps$util$utility_id[maps$util$value == as.character(util_val)],
+        sentiment_score_value = sent_val,
+        sentiment_score_id = if (is.na(sent_val)) NA_integer_ else
+          maps$sent$sentiment_id[maps$sent$value == as.character(sent_val)],
         modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
       ),
       conn, "review_assignment", returnData = FALSE, commit = TRUE
@@ -339,14 +348,30 @@ batch_score_process <- function(batch_id, conn) {
   results <- batch_results_preprocess(batch_info$file_output_id)
   success <- sapply(results, "[[", "statusCode") == 2
 
+  # Fetch rubric_id for each review so we can look up the correct score IDs
+  all_review_ids <- sapply(results, "[[", "review_id")
+  rubric_map <- tbl(conn, "review_assignment") |>
+    filter(id %in% local(all_review_ids)) |>
+    select(review_id = id, rubric_id) |>
+    collect()
+  score_maps <- db_fetch_score_maps(conn, unique(rubric_map$rubric_id))
+
   to_update <- lapply(results, function(r) {
+    rid      <- r$review_id
+    maps     <- score_maps[[as.character(rubric_map$rubric_id[rubric_map$review_id == rid])]]
+    util_val <- if (r$statusCode == 2) r$data$utility else NA_integer_
+    sent_val <- if (r$statusCode == 2) r$data$sentiment else NA_integer_
     data.frame(
-      id = r$review_id,
+      id = rid,
       statusCode = if (r$statusCode == 2) 5L else -3L,
       tokens_in = r$tokens_in,
       tokens_out = r$tokens_out,
-      utility = if (r$statusCode == 2) r$data$utility else NA_integer_,
-      sentiment = if (r$statusCode == 2) r$data$sentiment else NA_integer_,
+      utility_score_value = util_val,
+      utility_score_id = if (is.na(util_val)) NA_integer_ else
+        maps$util$utility_id[maps$util$value == as.character(util_val)],
+      sentiment_score_value = sent_val,
+      sentiment_score_id = if (is.na(sent_val)) NA_integer_ else
+        maps$sent$sentiment_id[maps$sent$value == as.character(sent_val)],
       modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
       stringsAsFactors = FALSE
     )

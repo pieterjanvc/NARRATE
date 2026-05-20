@@ -209,7 +209,11 @@ llm_comp_score <- function(
 db_fetch_review_extract <- function(conn, review_ids, force = FALSE) {
   review_info <- tbl(conn, "review_assignment") |>
     filter(id %in% local(review_ids)) |>
-    select(review_id = id, statusCode, evaluation_id, prompt_extract_id) |>
+    select(review_id = id, statusCode, evaluation_id, rubric_id) |>
+    left_join(
+      tbl(conn, "rubric") |> select(rubric_id = id, prompt_extract_id),
+      by = "rubric_id"
+    ) |>
     left_join(
       tbl(conn, "prompt") |> select(prompt_extract_id = id, prompt),
       by = "prompt_extract_id"
@@ -256,7 +260,11 @@ db_fetch_review_extract <- function(conn, review_ids, force = FALSE) {
 db_fetch_review_score <- function(conn, review_ids, force = FALSE) {
   review_info <- tbl(conn, "review_assignment") |>
     filter(id %in% local(review_ids)) |>
-    select(review_id = id, statusCode, prompt_score_id) |>
+    select(review_id = id, statusCode, rubric_id) |>
+    left_join(
+      tbl(conn, "rubric") |> select(rubric_id = id, prompt_score_id),
+      by = "rubric_id"
+    ) |>
     left_join(
       tbl(conn, "prompt") |> select(prompt_score_id = id, prompt),
       by = "prompt_score_id"
@@ -303,6 +311,40 @@ db_fetch_extractions <- function(conn, review_ids) {
       by = "competency_score_id"
     ) |>
     collect()
+}
+
+#' Fetch utility and sentiment ID lookup maps for a set of rubric IDs
+#'
+#' Returns a named list (keyed by rubric_id as character). Each element has
+#' \code{util} (columns: utility_id, value) and \code{sent}
+#' (columns: sentiment_id, value). Used by the scoring pipeline to translate
+#' the integer scores returned by the LLM into FK IDs for review_assignment.
+#'
+#' @param conn DB connection
+#' @param rubric_ids Integer vector of rubric IDs
+#'
+#' @import dplyr
+db_fetch_score_maps <- function(conn, rubric_ids) {
+  lapply(setNames(rubric_ids, as.character(rubric_ids)), function(rid) {
+    list(
+      util = tbl(conn, "rubric_utility") |>
+        filter(rubric_id == local(rid)) |>
+        left_join(
+          tbl(conn, "utility") |> select(utility_id = id, value),
+          by = "utility_id"
+        ) |>
+        select(utility_id, value) |>
+        collect(),
+      sent = tbl(conn, "rubric_sentiment") |>
+        filter(rubric_id == local(rid)) |>
+        left_join(
+          tbl(conn, "sentiment") |> select(sentiment_id = id, value),
+          by = "sentiment_id"
+        ) |>
+        select(sentiment_id, value) |>
+        collect()
+    )
+  })
 }
 
 # ─── DB write helpers ─────────────────────────────────────────────────────────

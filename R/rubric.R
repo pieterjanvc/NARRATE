@@ -230,32 +230,97 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
   ))
 }
 
-#' Check the rubric file to any updates and reprocess to generate prompts if needed
+#' Parse the rubric file, sync content tables, and create a versioned rubric row
+#'
+#' Runs \code{rubric_parsing()} to sync competency and score tables, then
+#' creates a new rubric row, populates its join tables, generates both filled
+#' prompt templates, stores them via \code{dbAddPrompt()}, and writes the
+#' resulting prompt IDs back to the rubric row.
+#'
+#' If the rubric content has not changed since the last run (no new rows from
+#' \code{rubric_parsing()} and the latest rubric already has both prompt IDs
+#' set), the existing rubric row is returned without creating a new one.
 #'
 #' @param conn Database connection
+#' @param showWarning Pass through to \code{dbAddPrompt()}. Default = FALSE.
 #'
 #' @import dplyr
+#' @importFrom sqlife tbl_insert tbl_update
 #'
-#' @returns Table with latest set of prompts
+#' @returns The rubric table row (data frame) for the active rubric
 #' @export
-rubric_process <- function(conn, showWarning = F) {
-  rubric_parsing(conn)
-  prompts <- prompt_generate(conn)
-  prompt_extract_id <- dbAddPrompt(
-    prompts$extract,
-    conn,
-    task = "comp_extract",
-    showWarning = showWarning
-  )
-  prompt_score_id <- dbAddPrompt(
-    prompts$score,
-    conn,
-    task = "comp_score",
-    showWarning = showWarning
-  )
-  tbl(conn, "prompt") |>
-    group_by(task) |>
-    filter(timestamp == max(timestamp, na.rm = T)) |>
-    ungroup() |>
+rubric_process <- function(conn, showWarning = FALSE) {
+  inserted <- rubric_parsing(conn)
+  content_changed <- any(sapply(inserted, nrow) > 0)
+
+  latest_rubric <- tbl(conn, "rubric") |>
+    filter(id == max(id, na.rm = TRUE)) |>
     collect()
+
+  already_linked <- nrow(latest_rubric) > 0 &&
+    !is.na(latest_rubric$prompt_extract_id) &&
+    !is.na(latest_rubric$prompt_score_id)
+
+  if (!content_changed && already_linked) {
+    if (showWarning) message("Rubric content unchanged; using existing rubric ", latest_rubric$id)
+    return(latest_rubric)
+  }
+
+  # Gather the latest ID for each entity, ordered as the rubric intends
+  latest_comp_ids <- tbl(conn, "competency") |>
+    group_by(cID) |>
+    filter(id == max(id, na.rm = TRUE)) |>
+    ungroup() |>
+    arrange(cID) |>
+    pull(id)
+
+  latest_spec_ids <- tbl(conn, "specificity") |> arrange(as.integer(value)) |> pull(id)
+  latest_util_ids <- tbl(conn, "utility")     |> arrange(as.integer(value)) |> pull(id)
+  latest_sent_ids <- tbl(conn, "sentiment")   |> arrange(as.integer(value)) |> pull(id)
+
+  # Create the new rubric row (prompts filled in below)
+  new_rubric <- tbl_insert(
+    data.frame(prompt_extract_id = NA_integer_, prompt_score_id = NA_integer_),
+    conn, "rubric"
+  )
+  rubric_id <- new_rubric$id
+
+  # Populate rubric join tables
+  tbl_insert(
+    data.frame(rubric_id = rubric_id, competency_id = latest_comp_ids,
+               order = seq_along(latest_comp_ids)),
+    conn, "rubric_competency", returnData = FALSE
+  )
+  tbl_insert(
+    data.frame(rubric_id = rubric_id, specificity_id = latest_spec_ids,
+               order = seq_along(latest_spec_ids)),
+    conn, "rubric_specificity", returnData = FALSE
+  )
+  tbl_insert(
+    data.frame(rubric_id = rubric_id, utility_id = latest_util_ids,
+               order = seq_along(latest_util_ids)),
+    conn, "rubric_utility", returnData = FALSE
+  )
+  tbl_insert(
+    data.frame(rubric_id = rubric_id, sentiment_id = latest_sent_ids,
+               order = seq_along(latest_sent_ids)),
+    conn, "rubric_sentiment", returnData = FALSE
+  )
+
+  # Generate filled prompts and store them
+  prompts <- prompt_generate(conn, rubric_id = rubric_id)
+  prompt_extract_id <- dbAddPrompt(prompts$extract, conn, task = "comp_extract",
+                                   showWarning = showWarning)
+  prompt_score_id   <- dbAddPrompt(prompts$score,   conn, task = "comp_score",
+                                   showWarning = showWarning)
+
+  # Write prompt IDs back to the rubric row
+  tbl_update(
+    data.frame(id = rubric_id,
+               prompt_extract_id = prompt_extract_id,
+               prompt_score_id   = prompt_score_id),
+    conn, "rubric"
+  )
+
+  tbl(conn, "rubric") |> filter(id == local(rubric_id)) |> collect()
 }
