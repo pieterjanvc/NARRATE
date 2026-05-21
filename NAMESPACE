@@ -2,7 +2,6 @@
 
 export(batch_extract_process)
 export(batch_score_process)
-export(dbAIreview)
 export(dbAddEvaluations)
 export(dbAddPrompt)
 export(dbCompExtraction)

@@ -164,24 +164,27 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
 
   # --- Insert (skip rows whose content has not changed) ---
   existing_comp <- tbl(conn, "competency") |>
-    select(id, cID, name, description) |>
+    select(id, name, description) |>
     collect()
 
   to_insert_comp <- anti_join(
     competency_df,
     existing_comp,
-    by = c("cID", "name", "description")
+    by = c("name", "description")
   )
   if (nrow(to_insert_comp) > 0) {
     tbl_insert(to_insert_comp, conn, "competency", commit = commit)
   }
 
-  # Build ID map from all DB rows that match the current competency data
+  # Build ID map keyed by position number; pick the latest id if duplicates exist
   comp_id_map <- tbl(conn, "competency") |>
-    select(id, cID, name, description) |>
+    select(id, name, description) |>
     collect() |>
-    inner_join(competency_df, by = c("cID", "name", "description")) |>
-    (\(d) setNames(d$id, d$cID))()
+    inner_join(competency_df |> select(cID, name, description), by = c("name", "description")) |>
+    group_by(cID) |>
+    filter(id == max(id)) |>
+    ungroup() |>
+    (\(d) setNames(d$id, as.character(d$cID)))()
 
   competency_diff_df <- data.frame(
     competency_id1 = comp_id_map[as.character(diff_num1)],
@@ -222,11 +225,12 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
   to_insert_sentiment   <- insert_score_table(sentiment_df,   "sentiment")
 
   invisible(list(
-    competency    = to_insert_comp,
+    competency      = to_insert_comp,
     competency_diff = to_insert_diff,
-    specificity   = to_insert_specificity,
-    utility       = to_insert_utility,
-    sentiment     = to_insert_sentiment
+    specificity     = to_insert_specificity,
+    utility         = to_insert_utility,
+    sentiment       = to_insert_sentiment,
+    comp_ids        = unname(comp_id_map[as.character(comp_numbers)])
   ))
 }
 
@@ -266,13 +270,10 @@ rubric_process <- function(conn, showWarning = FALSE) {
     return(latest_rubric)
   }
 
-  # Gather the latest ID for each entity, ordered as the rubric intends
-  latest_comp_ids <- tbl(conn, "competency") |>
-    group_by(cID) |>
-    filter(id == max(id, na.rm = TRUE)) |>
-    ungroup() |>
-    arrange(cID) |>
-    pull(id)
+  # Gather the latest ID for each entity, ordered as the rubric intends.
+  # rubric_parsing() already resolved name/description → competency id in
+  # markdown order, so we reuse that result directly.
+  latest_comp_ids <- inserted$comp_ids
 
   latest_spec_ids <- tbl(conn, "specificity") |> arrange(as.integer(value)) |> pull(id)
   latest_util_ids <- tbl(conn, "utility")     |> arrange(as.integer(value)) |> pull(id)
@@ -292,18 +293,15 @@ rubric_process <- function(conn, showWarning = FALSE) {
     conn, "rubric_competency", returnData = FALSE
   )
   tbl_insert(
-    data.frame(rubric_id = rubric_id, specificity_id = latest_spec_ids,
-               order = seq_along(latest_spec_ids)),
+    data.frame(rubric_id = rubric_id, specificity_id = latest_spec_ids),
     conn, "rubric_specificity", returnData = FALSE
   )
   tbl_insert(
-    data.frame(rubric_id = rubric_id, utility_id = latest_util_ids,
-               order = seq_along(latest_util_ids)),
+    data.frame(rubric_id = rubric_id, utility_id = latest_util_ids),
     conn, "rubric_utility", returnData = FALSE
   )
   tbl_insert(
-    data.frame(rubric_id = rubric_id, sentiment_id = latest_sent_ids,
-               order = seq_along(latest_sent_ids)),
+    data.frame(rubric_id = rubric_id, sentiment_id = latest_sent_ids),
     conn, "rubric_sentiment", returnData = FALSE
   )
 

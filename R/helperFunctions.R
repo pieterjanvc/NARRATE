@@ -336,7 +336,7 @@ batch_status_notify <- function(
               break
             }
 
-            batch_info <- CFME::llm_batch_status(batch_id, conn)
+            batch_info <- llm_batch_status(batch_id, conn)
 
             if (batch_info$statusCode == 3) {
               httr2::request(auth$url) |>
@@ -392,7 +392,7 @@ batch_status_notify <- function(
 status_codes <- function(conn, table = NULL) {
   q <- tbl(conn, "status_codes")
   if (!is.null(table)) {
-    tbl_filter <- table  # avoid name collision with the "table" column in dplyr mask
+    tbl_filter <- table # avoid name collision with the "table" column in dplyr mask
     q <- filter(
       q,
       .data[["table"]] == tbl_filter | .data[["function"]] == tbl_filter

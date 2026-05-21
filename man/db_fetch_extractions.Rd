@@ -13,8 +13,12 @@ db_fetch_extractions(conn, review_ids)
 }
 \value{
 Data frame with columns review_assignment_id, competency_id,
-competency_score_id, text_match
+comp_order, competency_score_id, text_match
 }
 \description{
+Also joins rubric_competency to include comp_order (the cIndex position used
+when sending extractions to the scoring LLM).
+}
+\details{
 Used by both llm_comp_score_run() and llm_comp_score_batch_submit().
 }

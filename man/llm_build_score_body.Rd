@@ -7,8 +7,8 @@
 llm_build_score_body(extractions, prompt)
 }
 \arguments{
-\item{extractions}{List of extraction items; each has cID (integer) and
-text (character vector)}
+\item{extractions}{List of extraction items; each has cIndex (integer order
+position within the rubric) and text (character vector)}
 
 \item{prompt}{System prompt (scoring instructions)}
 }

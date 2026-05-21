@@ -120,7 +120,7 @@ llm_comp_score_run <- function(
     rows <- extractions[extractions$review_assignment_id == rid, ]
     extr <- lapply(
       split(rows, rows$competency_id),
-      function(g) list(cID = g$competency_id[[1]], text = as.list(g$text_match))
+      function(g) list(cIndex = g$comp_order[[1]], text = as.list(g$text_match))
     )
 
     result <- llm_comp_score(
@@ -246,7 +246,7 @@ llm_comp_score_batch_submit <- function(
       rows <- extractions[extractions$review_assignment_id == rid, ]
       extr <- lapply(
         split(rows, rows$competency_id),
-        function(g) list(cID = g$competency_id[[1]], text = as.list(g$text_match))
+        function(g) list(cIndex = g$comp_order[[1]], text = as.list(g$text_match))
       )
       llm_build_score_body(
         unname(extr),

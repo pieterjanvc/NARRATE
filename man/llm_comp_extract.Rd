@@ -27,7 +27,7 @@ llm_comp_extract(
 List with:
 \itemize{
 \item statusCode: run status_codes(conn, "llm_comp_extract") for code details
-\item data: list of extraction items on success (each has cID and text), NULL otherwise
+\item data: list of extraction items on success (each has cIndex and text), NULL otherwise
 \item tokens_in, tokens_out: integer token counts
 \item raw: raw response text if debug = TRUE, otherwise NULL
 }

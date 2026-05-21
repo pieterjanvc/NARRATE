@@ -32,40 +32,39 @@ prompt_generate <- function(conn, rubric_id = NULL) {
     filter(rubric_id == local(rid)) |>
     arrange(order) |>
     left_join(
-      tbl(conn, "competency") |> select(competency_id = id, cID, name, description),
+      tbl(conn, "competency") |> select(competency_id = id, name, description),
       by = "competency_id"
     ) |>
-    select(competency_id, cID, name, description) |>
+    select(competency_id, comp_order = order, name, description) |>
     collect()
 
   competencies <- paste(
-    sprintf("### %d. %s\n\n%s", comp_data$cID, comp_data$name, comp_data$description),
+    sprintf("### %d. %s\n\n%s", comp_data$comp_order, comp_data$name, comp_data$description),
     collapse = "\n\n"
   )
 
   # --- Disambiguation (filtered to this rubric's competency set) ---
-  comp_ids <- comp_data$competency_id
+  # Use comp_data as an order lookup so no extra DB round-trip is needed
+  comp_ids  <- comp_data$competency_id
+  order_lookup <- setNames(comp_data$comp_order, as.character(comp_data$competency_id))
+
   diff_data <- tbl(conn, "competency_diff") |>
-    inner_join(
-      tbl(conn, "competency") |> select(id, cID1 = cID),
-      by = c("competency_id1" = "id")
-    ) |>
-    left_join(
-      tbl(conn, "competency") |> select(id, cID2 = cID),
-      by = c("competency_id2" = "id")
-    ) |>
     filter(
       competency_id1 %in% local(comp_ids),
       is.na(competency_id2) | competency_id2 %in% local(comp_ids)
     ) |>
-    arrange(cID1) |>
-    select(description, cID1, cID2) |>
-    collect()
+    select(description, competency_id1, competency_id2) |>
+    collect() |>
+    mutate(
+      order1 = order_lookup[as.character(competency_id1)],
+      order2 = order_lookup[as.character(competency_id2)]
+    ) |>
+    arrange(order1)
 
   diff_headers <- ifelse(
-    is.na(diff_data$cID2),
-    paste0("Comp ", diff_data$cID1, " vs. others"),
-    paste0("Comp ", diff_data$cID1, " vs. ", diff_data$cID2)
+    is.na(diff_data$order2),
+    paste0("Comp ", diff_data$order1, " vs. others"),
+    paste0("Comp ", diff_data$order1, " vs. ", diff_data$order2)
   )
   disambiguation <- paste(
     sprintf("- **%s**: %s", diff_headers, diff_data$description),
@@ -76,7 +75,7 @@ prompt_generate <- function(conn, rubric_id = NULL) {
   score_section <- function(join_table, score_table, id_col) {
     rows <- tbl(conn, join_table) |>
       filter(rubric_id == local(rid)) |>
-      arrange(order) |>
+      arrange(as.integer(value)) |>
       left_join(
         tbl(conn, score_table) |> select(id, value, description, example),
         by = setNames("id", id_col)

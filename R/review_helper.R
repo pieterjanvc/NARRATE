@@ -20,14 +20,14 @@ llm_build_extract_body <- function(evaluation_text, prompt) {
 
 #' Build a responses API request body for competency scoring
 #'
-#' @param extractions List of extraction items; each has cID (integer) and
-#'   text (character vector)
+#' @param extractions List of extraction items; each has cIndex (integer order
+#'   position within the rubric) and text (character vector)
 #' @param prompt System prompt (scoring instructions)
 #' @returns Named list for use as a responses API body (model field excluded)
 llm_build_score_body <- function(extractions, prompt) {
   user_msg <- jsonlite::toJSON(
     list(extractions = lapply(extractions, function(item) {
-      list(cID = item$cID, text = as.list(item$text))
+      list(cIndex = item$cIndex, text = as.list(item$text))
     })),
     auto_unbox = TRUE
   )
@@ -57,7 +57,7 @@ llm_build_score_body <- function(extractions, prompt) {
 #' @importFrom jsonlite fromJSON
 #' @returns List with:
 #'   - statusCode: run status_codes(conn, "llm_comp_extract") for code details
-#'   - data: list of extraction items on success (each has cID and text), NULL otherwise
+#'   - data: list of extraction items on success (each has cIndex and text), NULL otherwise
 #'   - tokens_in, tokens_out: integer token counts
 #'   - raw: raw response text if debug = TRUE, otherwise NULL
 #' @export
@@ -123,7 +123,7 @@ llm_comp_extract <- function(
 #' the batch scoring workflow.
 #'
 #' @param extractions List of extraction items from llm_comp_extract()$data;
-#'   each element has cID (integer) and text (character vector)
+#'   each element has cIndex (integer order position within the rubric) and text (character vector)
 #' @param prompt System prompt (scoring instructions)
 #' @param model Azure deployment name. Default = "gpt-5.1"
 #' @param endpoint Azure endpoint base URL
@@ -294,6 +294,9 @@ db_fetch_review_score <- function(conn, review_ids, force = FALSE) {
 
 #' Fetch extracted competency texts for a set of review assignments
 #'
+#' Also joins rubric_competency to include comp_order (the cIndex position used
+#' when sending extractions to the scoring LLM).
+#'
 #' Used by both llm_comp_score_run() and llm_comp_score_batch_submit().
 #'
 #' @param conn DB connection
@@ -301,11 +304,19 @@ db_fetch_review_score <- function(conn, review_ids, force = FALSE) {
 #'
 #' @import dplyr
 #' @returns Data frame with columns review_assignment_id, competency_id,
-#'   competency_score_id, text_match
+#'   comp_order, competency_score_id, text_match
 db_fetch_extractions <- function(conn, review_ids) {
   tbl(conn, "competency_score") |>
     filter(review_assignment_id %in% local(review_ids)) |>
     select(review_assignment_id, competency_id, competency_score_id = id) |>
+    left_join(
+      tbl(conn, "review_assignment") |> select(review_assignment_id = id, rubric_id),
+      by = "review_assignment_id"
+    ) |>
+    left_join(
+      tbl(conn, "rubric_competency") |> select(rubric_id, competency_id, comp_order = order),
+      by = c("rubric_id", "competency_id")
+    ) |>
     left_join(
       tbl(conn, "competency_text") |> select(competency_score_id, text_match),
       by = "competency_score_id"
@@ -355,7 +366,7 @@ db_fetch_score_maps <- function(conn, rubric_ids) {
 #'
 #' @param conn DB connection
 #' @param rid review_assignment ID
-#' @param competencies List of items with cID and specificity fields
+#' @param competencies List of items with cIndex (order position) and specificity fields
 #' @param commit Commit the transaction. Default = FALSE
 #'
 #' @import dplyr
@@ -365,15 +376,25 @@ db_write_score_specificity <- function(conn, rid, competencies, commit = FALSE) 
     return(invisible(NULL))
   }
 
+  rubric_id <- tbl(conn, "review_assignment") |>
+    filter(id == local(rid)) |>
+    pull(rubric_id)
+
+  order_map <- tbl(conn, "rubric_competency") |>
+    filter(rubric_id == local(rubric_id)) |>
+    select(comp_order = order, competency_id) |>
+    collect()
+
   existing <- tbl(conn, "competency_score") |>
     filter(review_assignment_id == local(rid)) |>
     collect()
 
   updates <- data.frame(
-    competency_id = sapply(competencies, "[[", "cID"),
+    comp_order  = sapply(competencies, "[[", "cIndex"),
     specificity = sapply(competencies, "[[", "specificity"),
     stringsAsFactors = FALSE
   ) |>
+    left_join(order_map, by = "comp_order") |>
     left_join(existing |> select(id, competency_id), by = "competency_id") |>
     select(id, specificity)
 

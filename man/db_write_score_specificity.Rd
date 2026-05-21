@@ -11,7 +11,7 @@ db_write_score_specificity(conn, rid, competencies, commit = FALSE)
 
 \item{rid}{review_assignment ID}
 
-\item{competencies}{List of items with cID and specificity fields}
+\item{competencies}{List of items with cIndex (order position) and specificity fields}
 
 \item{commit}{Commit the transaction. Default = FALSE}
 }

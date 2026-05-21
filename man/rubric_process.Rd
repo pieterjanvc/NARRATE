@@ -2,16 +2,26 @@
 % Please edit documentation in R/rubric.R
 \name{rubric_process}
 \alias{rubric_process}
-\title{Check the rubric file to any updates and reprocess to generate prompts if needed}
+\title{Parse the rubric file, sync content tables, and create a versioned rubric row}
 \usage{
-rubric_process(conn, showWarning = F)
+rubric_process(conn, showWarning = FALSE)
 }
 \arguments{
 \item{conn}{Database connection}
+
+\item{showWarning}{Pass through to \code{dbAddPrompt()}. Default = FALSE.}
 }
 \value{
-Table with latest set of prompts
+The rubric table row (data frame) for the active rubric
 }
 \description{
-Check the rubric file to any updates and reprocess to generate prompts if needed
+Runs \code{rubric_parsing()} to sync competency and score tables, then
+creates a new rubric row, populates its join tables, generates both filled
+prompt templates, stores them via \code{dbAddPrompt()}, and writes the
+resulting prompt IDs back to the rubric row.
+}
+\details{
+If the rubric content has not changed since the last run (no new rows from
+\code{rubric_parsing()} and the latest rubric already has both prompt IDs
+set), the existing rubric row is returned without creating a new one.
 }

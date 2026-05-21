@@ -171,16 +171,6 @@ CREATE TABLE "rubric_competency" (
   FOREIGN KEY ("competency_id") REFERENCES "competency"("id") ON DELETE CASCADE
 );
 
--- CREATE TABLE "score" (
---   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
---   "category" TEXT NOT NULL,
---   "value" TEXT NOT NULL,
---   "description" TEXT NOT NULL,
---   "example" TEXT,
---   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
---   "note" TEXT
--- );
-
 CREATE TABLE "specificity" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "value" TEXT NOT NULL,
@@ -194,7 +184,6 @@ CREATE TABLE "rubric_specificity" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "rubric_id" INTEGER NOT NULL,
   "specificity_id" INTEGER NOT NULL,
-  "order" INTEGER NOT NULL,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   FOREIGN KEY ("rubric_id") REFERENCES "rubric"("id") ON DELETE CASCADE,
   FOREIGN KEY ("specificity_id") REFERENCES "specificity"("id") ON DELETE CASCADE
@@ -213,7 +202,6 @@ CREATE TABLE "rubric_utility" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "rubric_id" INTEGER NOT NULL,
   "utility_id" INTEGER NOT NULL,
-  "order" INTEGER NOT NULL,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   FOREIGN KEY ("rubric_id") REFERENCES "rubric"("id") ON DELETE CASCADE,
   FOREIGN KEY ("utility_id") REFERENCES "utility"("id") ON DELETE CASCADE
@@ -232,7 +220,6 @@ CREATE TABLE "rubric_sentiment" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "rubric_id" INTEGER NOT NULL,
   "sentiment_id" INTEGER NOT NULL,
-  "order" INTEGER NOT NULL,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   FOREIGN KEY ("rubric_id") REFERENCES "rubric"("id") ON DELETE CASCADE,
   FOREIGN KEY ("sentiment_id") REFERENCES "sentiment"("id") ON DELETE CASCADE

@@ -14,7 +14,7 @@ llm_comp_score(
 }
 \arguments{
 \item{extractions}{List of extraction items from llm_comp_extract()$data;
-each element has cID (integer) and text (character vector)}
+each element has cIndex (integer order position within the rubric) and text (character vector)}
 
 \item{prompt}{System prompt (scoring instructions)}
 

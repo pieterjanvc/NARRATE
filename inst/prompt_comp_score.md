@@ -49,4 +49,4 @@ rest.
 
 Return valid JSON only — no markdown, no explanation. Use this exact structure:
 
-{"competencies": [{"cID": 1, "specificity": 2}], "utility": 2, "sentiment": 4 }
+{"competencies": [{"cIndex": 1, "specificity": 2}], "utility": 2, "sentiment": 4 }

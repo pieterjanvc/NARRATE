@@ -43,10 +43,10 @@ a single one:
 
 Return valid JSON only — no markdown, no explanation. Use this exact structure:
 
-{"extractions": [{"cID": 1, "text": ["verbatim span 1", "verbatim span 2"]}]}
+{"extractions": [{"cIndex": 1, "text": ["verbatim span 1", "verbatim span 2"]}]}
 
 Only include competencies that were found. An empty extractions array is valid.
 
 Before returning, scan your output: if any string appears under more than one
-cID, remove it from all but the single most specific match. Remove competencies
+cIndex, remove it from all but the single most specific match. Remove competencies
 as needed if they no longer have supporting text evidence.

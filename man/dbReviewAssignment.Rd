@@ -9,9 +9,7 @@ dbReviewAssignment(
   id,
   reviewer_id,
   evaluation_id,
-  prompt_id,
-  prompt_extract_id,
-  prompt_score_id,
+  rubric_id,
   include_questions,
   redacted,
   duration,
@@ -32,9 +30,7 @@ dbReviewAssignment(
 
 \item{evaluation_id}{(Required if id not set)}
 
-\item{prompt_extract_id}{(Required if id not set)}
-
-\item{prompt_score_id}{(Required if id not set)}
+\item{rubric_id}{(Optional) Rubric ID. Defaults to the most recently created rubric.}
 
 \item{include_questions}{(Optional value)}
 
