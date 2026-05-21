@@ -1,7 +1,7 @@
 # ARGUMENTS
 # *********
-seed    <- 20260121
-db_path <- "local/ai_review.db"
+seed <- 20260121
+db_path <- "local/cfme_new.db"
 
 dbSetup(db_path, "inst/cfme.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
@@ -34,9 +34,10 @@ eval_sample <- tbl(conn, "evaluation") |>
 
 assignments <- dbReviewAssignment(
   conn,
-  reviewer_id      = 1,
-  evaluation_id    = eval_sample,
-  redacted         = TRUE,
+  reviewer_id = 1,
+  evaluation_id = eval_sample,
+  rubric_id = 1,
+  redacted = TRUE,
   include_questions = TRUE
 )
 
@@ -51,7 +52,8 @@ review_ids <- tbl(conn, "review_assignment") |>
 
 # Batch (preferred for large sets):
 batch_extract <- llm_comp_extract_batch_submit(conn, review_ids)
-llm_batch_status(batch_extract$id, conn)  # poll until statusCode == 3
+llm_batch_status(batch_extract$id, conn) # poll until statusCode == 3
+batch_status_notify(batch_extract$id, db_path)
 batch_extract_process(batch_extract$id, conn)
 
 # STEP 2 — Competency scoring
@@ -65,14 +67,15 @@ review_ids_ready <- tbl(conn, "review_assignment") |>
 
 # Batch:
 batch_score <- llm_comp_score_batch_submit(conn, review_ids_ready)
-llm_batch_status(batch_score$id, conn)   # poll until statusCode == 3
+llm_batch_status(batch_score$id, conn) # poll until statusCode == 3
+# batch_status_notify(batch_score$id, db_path)
 batch_score_process(batch_score$id, conn)
 
 # SUMMARY STATS
 # *************
 specificityScaling <- 0.3
-utilScaling        <- 1.5
-sentScaling        <- 0.3
+utilScaling <- 1.5
+sentScaling <- 0.3
 
 tbl(conn, "review_assignment") |>
   filter(statusCode == 5) |>
@@ -80,10 +83,10 @@ tbl(conn, "review_assignment") |>
     tbl(conn, "competency_score") |>
       group_by(id = review_assignment_id) |>
       summarise(
-        score           = sum(specificity * specificityScaling),
-        nComp           = n(),
-        minSpecificity  = min(specificity),
-        maxSpecificity  = max(specificity),
+        score = sum(specificity * specificityScaling),
+        nComp = n(),
+        minSpecificity = min(specificity),
+        maxSpecificity = max(specificity),
         meanSpecificity = mean(specificity)
       ),
     by = "id"
