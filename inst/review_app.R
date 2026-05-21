@@ -52,6 +52,9 @@ ui <- page_fluid(
     :root {
     --dt-row-selected: 224, 168, 78;
     }
+    .tooltip .tooltip-inner {
+      max-width: 300px;
+    }
   "
   )),
   # Add the DB download link
@@ -299,28 +302,28 @@ server <- function(input, output, session) {
       specificity = tbl(conn, "rubric_specificity") |>
         filter(rubric_id == local(rid)) |>
         left_join(
-          tbl(conn, "specificity") |> select(specificity_id = id, value, description, note),
+          tbl(conn, "specificity") |> select(specificity_id = id, value, description, example, note),
           by = "specificity_id"
         ) |>
-        select(id = specificity_id, value, description, note) |>
+        select(id = specificity_id, value, description, example, note) |>
         collect() |>
         arrange(as.integer(value)),
       utility = tbl(conn, "rubric_utility") |>
         filter(rubric_id == local(rid)) |>
         left_join(
-          tbl(conn, "utility") |> select(utility_id = id, value, description, note),
+          tbl(conn, "utility") |> select(utility_id = id, value, description, example, note),
           by = "utility_id"
         ) |>
-        select(id = utility_id, value, description, note) |>
+        select(id = utility_id, value, description, example, note) |>
         collect() |>
         arrange(as.integer(value)),
       sentiment = tbl(conn, "rubric_sentiment") |>
         filter(rubric_id == local(rid)) |>
         left_join(
-          tbl(conn, "sentiment") |> select(sentiment_id = id, value, description, note),
+          tbl(conn, "sentiment") |> select(sentiment_id = id, value, description, example, note),
           by = "sentiment_id"
         ) |>
-        select(id = sentiment_id, value, description, note) |>
+        select(id = sentiment_id, value, description, example, note) |>
         collect() |>
         arrange(as.integer(value))
     )
@@ -329,6 +332,18 @@ server <- function(input, output, session) {
   # Helper: named vector of integer value → "N - description" label
   score_choices <- function(opts) {
     setNames(as.integer(opts$value), paste(opts$value, "-", opts$description))
+  }
+
+  # Helper: radio button label with a hover tooltip showing guiding examples
+  examples_label <- function(label_text, opts) {
+    ex <- opts[!is.na(opts$example) & nzchar(opts$example), ]
+    if (nrow(ex) == 0) return(label_text)
+    content <- HTML(paste0(
+      "<div style='text-align:left'><strong>Guiding Examples</strong><br>",
+      paste(paste0("- Score of ", ex$value, ": ", ex$example), collapse = "<br>"),
+      "</div>"
+    ))
+    tagList(label_text, tooltip(icon("circle-info", class = "fa-solid ms-1"), content, placement = "right"))
   }
 
   reviewScores <- reactiveVal()
@@ -528,7 +543,7 @@ server <- function(input, output, session) {
       rr_opts <- review_rubric_opts()
       updateRadioButtons(
         inputId = "specificity",
-        label = "Specificity score",
+        label = examples_label("Specificity score", rr_opts$specificity),
         choices = score_choices(rr_opts$specificity),
         selected = NULL
       )
@@ -536,7 +551,7 @@ server <- function(input, output, session) {
       # Overall scores
       updateRadioButtons(
         inputId = "util",
-        label = "Utility score",
+        label = examples_label("Utility score", rr_opts$utility),
         choices = score_choices(rr_opts$utility),
         selected = if (is.na(review_assingment$utility_score_value)) {
           character(0)
@@ -546,7 +561,7 @@ server <- function(input, output, session) {
       )
       updateRadioButtons(
         inputId = "sent",
-        label = "Sentiment score",
+        label = examples_label("Sentiment score", rr_opts$sentiment),
         choices = score_choices(rr_opts$sentiment),
         selected = if (is.na(review_assingment$sentiment_score_value)) {
           character(0)
