@@ -196,7 +196,12 @@ ui <- page_fluid(
       layout_columns(
         card(
           card_header("Competencies"),
-          selectInput("rubricID", "Rubric version", choices = c(), width = "100%"),
+          selectInput(
+            "rubricID",
+            "Rubric version",
+            choices = c(),
+            width = "100%"
+          ),
           div(DTOutput("rubricCompTable"))
         ),
         card(
@@ -219,6 +224,30 @@ ui <- page_fluid(
           )
         ),
         col_widths = 12
+      )
+    ),
+    nav_panel(
+      "ASSIGNMENT",
+      layout_columns(
+        card(
+          card_header("Select Evaluation"),
+          selectInput(
+            "assignment_evalID",
+            "Evaluation",
+            choices = c(),
+            width = "100%"
+          ),
+          checkboxInput(
+            "includeOtherRubric",
+            "Include previously reviewed with different rubric",
+            value = FALSE
+          ),
+          actionButton("assignToAll", "Assign to all")
+        ),
+        card(
+          card_header("Student evaluation"),
+          uiOutput("assignment_evaluation")
+        )
       )
     )
   )
@@ -302,7 +331,8 @@ server <- function(input, output, session) {
       specificity = tbl(conn, "rubric_specificity") |>
         filter(rubric_id == local(rid)) |>
         left_join(
-          tbl(conn, "specificity") |> select(specificity_id = id, value, description, example, note),
+          tbl(conn, "specificity") |>
+            select(specificity_id = id, value, description, example, note),
           by = "specificity_id"
         ) |>
         select(id = specificity_id, value, description, example, note) |>
@@ -311,7 +341,8 @@ server <- function(input, output, session) {
       utility = tbl(conn, "rubric_utility") |>
         filter(rubric_id == local(rid)) |>
         left_join(
-          tbl(conn, "utility") |> select(utility_id = id, value, description, example, note),
+          tbl(conn, "utility") |>
+            select(utility_id = id, value, description, example, note),
           by = "utility_id"
         ) |>
         select(id = utility_id, value, description, example, note) |>
@@ -320,7 +351,8 @@ server <- function(input, output, session) {
       sentiment = tbl(conn, "rubric_sentiment") |>
         filter(rubric_id == local(rid)) |>
         left_join(
-          tbl(conn, "sentiment") |> select(sentiment_id = id, value, description, example, note),
+          tbl(conn, "sentiment") |>
+            select(sentiment_id = id, value, description, example, note),
           by = "sentiment_id"
         ) |>
         select(id = sentiment_id, value, description, example, note) |>
@@ -337,13 +369,25 @@ server <- function(input, output, session) {
   # Helper: radio button label with a hover tooltip showing guiding examples
   examples_label <- function(label_text, opts) {
     ex <- opts[!is.na(opts$example) & nzchar(opts$example), ]
-    if (nrow(ex) == 0) return(label_text)
+    if (nrow(ex) == 0) {
+      return(label_text)
+    }
     content <- HTML(paste0(
       "<div style='text-align:left'><strong>Guiding Examples</strong><br>",
-      paste(paste0("- Score of ", ex$value, ": ", ex$example), collapse = "<br>"),
+      paste(
+        paste0("- Score of ", ex$value, ": ", ex$example),
+        collapse = "<br>"
+      ),
       "</div>"
     ))
-    tagList(label_text, tooltip(icon("circle-info", class = "fa-solid ms-1"), content, placement = "right"))
+    tagList(
+      label_text,
+      tooltip(
+        icon("circle-info", class = "fa-solid ms-1"),
+        content,
+        placement = "right"
+      )
+    )
   }
 
   reviewScores <- reactiveVal()
@@ -394,10 +438,11 @@ server <- function(input, output, session) {
       ) |>
       mutate(
         descr = sprintf(
-          "%s (%s %s) - %s",
+          "%s (%s %s, rubric %s) - %s",
           evaluation_id,
           ifelse(complete == 1, "complete", "incomplete"),
           ifelse(summary_flg == 1, "summative", "formative"),
+          rubric_id,
           case_when(
             statusCode %in% c(ra_completed, ra_ai_done) ~ ra_completed_label,
             TRUE ~ coalesce(ra_code_desc[as.character(statusCode)], "Error")
@@ -743,9 +788,13 @@ server <- function(input, output, session) {
     rr_opts <- review_rubric_opts()
     overallScores <- data.frame(
       id = as.integer(input$reviewID),
-      utility_score_id = rr_opts$utility$id[rr_opts$utility$value == input$util],
+      utility_score_id = rr_opts$utility$id[
+        rr_opts$utility$value == input$util
+      ],
       utility_score_value = as.integer(input$util),
-      sentiment_score_id = rr_opts$sentiment$id[rr_opts$sentiment$value == input$sent],
+      sentiment_score_id = rr_opts$sentiment$id[
+        rr_opts$sentiment$value == input$sent
+      ],
       sentiment_score_value = as.integer(input$sent),
       note = str_trim(input$reviewComment)
     )
@@ -777,9 +826,18 @@ server <- function(input, output, session) {
 
     # Build lookup vectors for score labels from the review's rubric
     rr_opts <- review_rubric_opts()
-    spec_lookup <- setNames(rr_opts$specificity$description, as.integer(rr_opts$specificity$value))
-    util_lookup <- setNames(rr_opts$utility$description,     as.integer(rr_opts$utility$value))
-    sent_lookup <- setNames(rr_opts$sentiment$description,   as.integer(rr_opts$sentiment$value))
+    spec_lookup <- setNames(
+      rr_opts$specificity$description,
+      as.integer(rr_opts$specificity$value)
+    )
+    util_lookup <- setNames(
+      rr_opts$utility$description,
+      as.integer(rr_opts$utility$value)
+    )
+    sent_lookup <- setNames(
+      rr_opts$sentiment$description,
+      as.integer(rr_opts$sentiment$value)
+    )
 
     compScores <- reviewScores()$compScores |>
       select(specificity, competency_id) |>
@@ -931,11 +989,11 @@ server <- function(input, output, session) {
       as.integer(specificity_opts$value)
     )
     util_df <- data.frame(
-      utility_score_value = as.integer(utility_opts$value),
+      utility_score_id = utility_opts$id,
       util = utility_opts$description
     )
     sent_df <- data.frame(
-      sentiment_score_value = as.integer(sentiment_opts$value),
+      sentiment_score_id = sentiment_opts$id,
       sent = sentiment_opts$description
     )
     comp_metric <- data.frame(
@@ -947,7 +1005,11 @@ server <- function(input, output, session) {
       info$compInfo |>
         select(reviewer, competency_id, specificity, note) |>
         mutate(
-          specificity = spec_lookup[as.character(specificity)],
+          specificity = ifelse(
+            is.na(specificity),
+            NA_character_,
+            paste(specificity, "-", spec_lookup[as.character(specificity)])
+          ),
           specificity = ifelse(
             is.na(note),
             specificity,
@@ -966,7 +1028,13 @@ server <- function(input, output, session) {
         left_join(comp_metric, by = "competency_id") |>
         select(-competency_id),
       info$overall |>
-        select(utility_score_value, sentiment_score_value, note) |>
+        select(
+          utility_score_id,
+          utility_score_value,
+          sentiment_score_id,
+          sentiment_score_value,
+          note
+        ) |>
         mutate(
           note = ifelse(
             is.na(note),
@@ -974,8 +1042,20 @@ server <- function(input, output, session) {
             sprintf("<i style='color:#e04233;'>%s<i>", note)
           )
         ) |>
-        left_join(util_df, by = "utility_score_value") |>
-        left_join(sent_df, by = "sentiment_score_value") |>
+        left_join(util_df, by = "utility_score_id") |>
+        left_join(sent_df, by = "sentiment_score_id") |>
+        mutate(
+          util = ifelse(
+            is.na(utility_score_value),
+            NA_character_,
+            paste(utility_score_value, "-", util)
+          ),
+          sent = ifelse(
+            is.na(sentiment_score_value),
+            NA_character_,
+            paste(sentiment_score_value, "-", sent)
+          )
+        ) |>
         select(util, sent, note) |>
         t() |>
         as.data.frame() |>
@@ -1087,7 +1167,9 @@ server <- function(input, output, session) {
 
   local({
     rubrics_df <- loadRubrics()
-    updateSelectInput(session, "rubricID",
+    updateSelectInput(
+      session,
+      "rubricID",
       choices = setNames(rubrics_df$id, rubrics_df$label)
     )
   })
@@ -1118,15 +1200,26 @@ server <- function(input, output, session) {
     rubric_comps_edited(rubric_comps_orig())
   })
 
-  output$rubricCompTable <- renderDT({
-    req(rubric_comps_edited())
-    rubric_comps_edited() |>
-      select(Order = comp_order, Name = name, Description = description, Note = note)
-  },
-  editable = list(target = "cell"),
-  options = list(paging = FALSE, searching = FALSE, info = FALSE, ordering = FALSE),
-  rownames = FALSE,
-  selection = "none"
+  output$rubricCompTable <- renderDT(
+    {
+      req(rubric_comps_edited())
+      rubric_comps_edited() |>
+        select(
+          Order = comp_order,
+          Name = name,
+          Description = description,
+          Note = note
+        )
+    },
+    editable = list(target = "cell"),
+    options = list(
+      paging = FALSE,
+      searching = FALSE,
+      info = FALSE,
+      ordering = FALSE
+    ),
+    rownames = FALSE,
+    selection = "none"
   )
 
   observeEvent(input$rubricCompTable_cell_edit, {
@@ -1134,7 +1227,10 @@ server <- function(input, output, session) {
     df <- rubric_comps_edited()
     # Displayed columns (0-indexed): 0=comp_order, 1=name, 2=description, 3=note
     col_name <- c("comp_order", "name", "description", "note")[info$col + 1]
-    df[info$row, col_name] <- DT::coerceValue(info$value, df[info$row, col_name])
+    df[info$row, col_name] <- DT::coerceValue(
+      info$value,
+      df[info$row, col_name]
+    )
     rubric_comps_edited(df)
   })
 
@@ -1159,28 +1255,46 @@ server <- function(input, output, session) {
         select(specificity_id = id, value, description, example, note) |>
         collect() |>
         arrange(as.integer(value))
-    } else rows
+    } else {
+      rows
+    }
   })
 
   rubric_spec_edited <- reactiveVal(NULL)
-  observeEvent(rubric_spec_orig(), { rubric_spec_edited(rubric_spec_orig()) })
+  observeEvent(rubric_spec_orig(), {
+    rubric_spec_edited(rubric_spec_orig())
+  })
 
-  output$rubricSpecTable <- renderDT({
-    req(rubric_spec_edited())
-    rubric_spec_edited() |>
-      select(Value = value, Description = description, Example = example, Note = note)
-  },
-  editable = list(target = "cell"),
-  options = list(paging = FALSE, searching = FALSE, info = FALSE, ordering = FALSE),
-  rownames = FALSE,
-  selection = "none"
+  output$rubricSpecTable <- renderDT(
+    {
+      req(rubric_spec_edited())
+      rubric_spec_edited() |>
+        select(
+          Value = value,
+          Description = description,
+          Example = example,
+          Note = note
+        )
+    },
+    editable = list(target = "cell"),
+    options = list(
+      paging = FALSE,
+      searching = FALSE,
+      info = FALSE,
+      ordering = FALSE
+    ),
+    rownames = FALSE,
+    selection = "none"
   )
 
   observeEvent(input$rubricSpecTable_cell_edit, {
     info <- input$rubricSpecTable_cell_edit
     df <- rubric_spec_edited()
     col_name <- c("value", "description", "example", "note")[info$col + 1]
-    df[info$row, col_name] <- DT::coerceValue(info$value, df[info$row, col_name])
+    df[info$row, col_name] <- DT::coerceValue(
+      info$value,
+      df[info$row, col_name]
+    )
     rubric_spec_edited(df)
   })
 
@@ -1205,28 +1319,46 @@ server <- function(input, output, session) {
         select(utility_id = id, value, description, example, note) |>
         collect() |>
         arrange(as.integer(value))
-    } else rows
+    } else {
+      rows
+    }
   })
 
   rubric_util_edited <- reactiveVal(NULL)
-  observeEvent(rubric_util_orig(), { rubric_util_edited(rubric_util_orig()) })
+  observeEvent(rubric_util_orig(), {
+    rubric_util_edited(rubric_util_orig())
+  })
 
-  output$rubricUtilTable <- renderDT({
-    req(rubric_util_edited())
-    rubric_util_edited() |>
-      select(Value = value, Description = description, Example = example, Note = note)
-  },
-  editable = list(target = "cell"),
-  options = list(paging = FALSE, searching = FALSE, info = FALSE, ordering = FALSE),
-  rownames = FALSE,
-  selection = "none"
+  output$rubricUtilTable <- renderDT(
+    {
+      req(rubric_util_edited())
+      rubric_util_edited() |>
+        select(
+          Value = value,
+          Description = description,
+          Example = example,
+          Note = note
+        )
+    },
+    editable = list(target = "cell"),
+    options = list(
+      paging = FALSE,
+      searching = FALSE,
+      info = FALSE,
+      ordering = FALSE
+    ),
+    rownames = FALSE,
+    selection = "none"
   )
 
   observeEvent(input$rubricUtilTable_cell_edit, {
     info <- input$rubricUtilTable_cell_edit
     df <- rubric_util_edited()
     col_name <- c("value", "description", "example", "note")[info$col + 1]
-    df[info$row, col_name] <- DT::coerceValue(info$value, df[info$row, col_name])
+    df[info$row, col_name] <- DT::coerceValue(
+      info$value,
+      df[info$row, col_name]
+    )
     rubric_util_edited(df)
   })
 
@@ -1251,40 +1383,61 @@ server <- function(input, output, session) {
         select(sentiment_id = id, value, description, example, note) |>
         collect() |>
         arrange(as.integer(value))
-    } else rows
+    } else {
+      rows
+    }
   })
 
   rubric_sent_edited <- reactiveVal(NULL)
-  observeEvent(rubric_sent_orig(), { rubric_sent_edited(rubric_sent_orig()) })
+  observeEvent(rubric_sent_orig(), {
+    rubric_sent_edited(rubric_sent_orig())
+  })
 
-  output$rubricSentTable <- renderDT({
-    req(rubric_sent_edited())
-    rubric_sent_edited() |>
-      select(Value = value, Description = description, Example = example, Note = note)
-  },
-  editable = list(target = "cell"),
-  options = list(paging = FALSE, searching = FALSE, info = FALSE, ordering = FALSE),
-  rownames = FALSE,
-  selection = "none"
+  output$rubricSentTable <- renderDT(
+    {
+      req(rubric_sent_edited())
+      rubric_sent_edited() |>
+        select(
+          Value = value,
+          Description = description,
+          Example = example,
+          Note = note
+        )
+    },
+    editable = list(target = "cell"),
+    options = list(
+      paging = FALSE,
+      searching = FALSE,
+      info = FALSE,
+      ordering = FALSE
+    ),
+    rownames = FALSE,
+    selection = "none"
   )
 
   observeEvent(input$rubricSentTable_cell_edit, {
     info <- input$rubricSentTable_cell_edit
     df <- rubric_sent_edited()
     col_name <- c("value", "description", "example", "note")[info$col + 1]
-    df[info$row, col_name] <- DT::coerceValue(info$value, df[info$row, col_name])
+    df[info$row, col_name] <- DT::coerceValue(
+      info$value,
+      df[info$row, col_name]
+    )
     rubric_sent_edited(df)
   })
 
   observeEvent(input$updateRubric, {
     edited <- rubric_comps_edited()
-    orig   <- rubric_comps_orig()
+    orig <- rubric_comps_orig()
 
     # Order must be integers 1-N with no duplicates or gaps
     orders <- suppressWarnings(as.integer(edited$comp_order))
     if (any(is.na(orders)) || !identical(sort(orders), seq_len(nrow(edited)))) {
       showModal(modalDialog(
-        sprintf("Order values must be the integers 1 to %d with no duplicates.", nrow(edited)),
+        sprintf(
+          "Order values must be the integers 1 to %d with no duplicates.",
+          nrow(edited)
+        ),
         title = "Invalid order values"
       ))
       return()
@@ -1299,8 +1452,18 @@ server <- function(input, output, session) {
     new_comp_ids <- integer(nrow(edited))
     for (i in seq_len(nrow(edited))) {
       orig_row <- orig[orig$competency_id == edited$competency_id[i], ]
-      orig_note <- if (nrow(orig_row) == 0 || is.na(orig_row$note)) NA_character_ else orig_row$note
-      edit_note <- if (is.na(edited$note[i]) || !nzchar(trimws(edited$note[i]))) NA_character_ else edited$note[i]
+      orig_note <- if (nrow(orig_row) == 0 || is.na(orig_row$note)) {
+        NA_character_
+      } else {
+        orig_row$note
+      }
+      edit_note <- if (
+        is.na(edited$note[i]) || !nzchar(trimws(edited$note[i]))
+      ) {
+        NA_character_
+      } else {
+        edited$note[i]
+      }
       changed <- nrow(orig_row) == 0 ||
         edited$name[i] != orig_row$name ||
         edited$description[i] != orig_row$description ||
@@ -1309,13 +1472,15 @@ server <- function(input, output, session) {
       if (changed) {
         new_comp_ids[i] <- tbl_insert(
           data.frame(
-            cID         = edited$comp_order[i],
-            name        = edited$name[i],
+            cID = edited$comp_order[i],
+            name = edited$name[i],
             description = edited$description[i],
-            note        = edit_note
+            note = edit_note
           ),
-          conn, "competency"
-        ) |> pull(id)
+          conn,
+          "competency"
+        ) |>
+          pull(id)
       } else {
         new_comp_ids[i] <- edited$competency_id[i]
       }
@@ -1333,24 +1498,41 @@ server <- function(input, output, session) {
 
     new_rubric_id <- tbl_insert(
       data.frame(
-        prompt_extract_id = if (length(latest_extract_id) == 0 || is.na(latest_extract_id)) NA_integer_ else as.integer(latest_extract_id),
-        prompt_score_id   = if (length(latest_score_id)   == 0 || is.na(latest_score_id))   NA_integer_ else as.integer(latest_score_id)
+        prompt_extract_id = if (
+          length(latest_extract_id) == 0 || is.na(latest_extract_id)
+        ) {
+          NA_integer_
+        } else {
+          as.integer(latest_extract_id)
+        },
+        prompt_score_id = if (
+          length(latest_score_id) == 0 || is.na(latest_score_id)
+        ) {
+          NA_integer_
+        } else {
+          as.integer(latest_score_id)
+        }
       ),
-      conn, "rubric"
-    ) |> pull(id)
+      conn,
+      "rubric"
+    ) |>
+      pull(id)
 
     tbl_insert(
       data.frame(
-        rubric_id     = new_rubric_id,
+        rubric_id = new_rubric_id,
         competency_id = new_comp_ids,
-        order         = edited$comp_order
+        order = edited$comp_order
       ),
-      conn, "rubric_competency",
+      conn,
+      "rubric_competency",
       returnData = FALSE
     )
 
     # Helper: normalize blank/NA to NA_character_ for comparison and storage
-    cell_val <- function(x) if (is.na(x) || !nzchar(trimws(x))) NA_character_ else as.character(x)
+    cell_val <- function(x) {
+      if (is.na(x) || !nzchar(trimws(x))) NA_character_ else as.character(x)
+    }
 
     # Resolve scoring table IDs (create new row if content changed, reuse if not)
     resolve_score_ids <- function(ed, orig_data, id_col, table_name) {
@@ -1358,21 +1540,26 @@ server <- function(input, output, session) {
       for (i in seq_len(nrow(ed))) {
         orig_row <- orig_data[orig_data[[id_col]] == ed[[id_col]][i], ]
         changed <- nrow(orig_row) == 0 ||
-          !identical(cell_val(ed$value[i]),       cell_val(orig_row$value)) ||
-          !identical(cell_val(ed$description[i]), cell_val(orig_row$description)) ||
-          !identical(cell_val(ed$example[i]),     cell_val(orig_row$example)) ||
-          !identical(cell_val(ed$note[i]),         cell_val(orig_row$note))
+          !identical(cell_val(ed$value[i]), cell_val(orig_row$value)) ||
+          !identical(
+            cell_val(ed$description[i]),
+            cell_val(orig_row$description)
+          ) ||
+          !identical(cell_val(ed$example[i]), cell_val(orig_row$example)) ||
+          !identical(cell_val(ed$note[i]), cell_val(orig_row$note))
         if (changed) {
           new_ids[i] <- tbl_insert(
             data.frame(
-              value       = ed$value[i],
+              value = ed$value[i],
               description = ed$description[i],
-              example     = cell_val(ed$example[i]),
-              note        = cell_val(ed$note[i]),
+              example = cell_val(ed$example[i]),
+              note = cell_val(ed$note[i]),
               stringsAsFactors = FALSE
             ),
-            conn, table_name
-          ) |> pull(id)
+            conn,
+            table_name
+          ) |>
+            pull(id)
         } else {
           new_ids[i] <- ed[[id_col]][i]
         }
@@ -1381,32 +1568,49 @@ server <- function(input, output, session) {
     }
 
     new_spec_ids <- resolve_score_ids(
-      rubric_spec_edited(), rubric_spec_orig(), "specificity_id", "specificity"
+      rubric_spec_edited(),
+      rubric_spec_orig(),
+      "specificity_id",
+      "specificity"
     )
     tbl_insert(
       data.frame(rubric_id = new_rubric_id, specificity_id = new_spec_ids),
-      conn, "rubric_specificity", returnData = FALSE
+      conn,
+      "rubric_specificity",
+      returnData = FALSE
     )
 
     new_util_ids <- resolve_score_ids(
-      rubric_util_edited(), rubric_util_orig(), "utility_id", "utility"
+      rubric_util_edited(),
+      rubric_util_orig(),
+      "utility_id",
+      "utility"
     )
     tbl_insert(
       data.frame(rubric_id = new_rubric_id, utility_id = new_util_ids),
-      conn, "rubric_utility", returnData = FALSE
+      conn,
+      "rubric_utility",
+      returnData = FALSE
     )
 
     new_sent_ids <- resolve_score_ids(
-      rubric_sent_edited(), rubric_sent_orig(), "sentiment_id", "sentiment"
+      rubric_sent_edited(),
+      rubric_sent_orig(),
+      "sentiment_id",
+      "sentiment"
     )
     tbl_insert(
       data.frame(rubric_id = new_rubric_id, sentiment_id = new_sent_ids),
-      conn, "rubric_sentiment", returnData = FALSE
+      conn,
+      "rubric_sentiment",
+      returnData = FALSE
     )
 
     rubrics_df <- loadRubrics()
-    updateSelectInput(session, "rubricID",
-      choices  = setNames(rubrics_df$id, rubrics_df$label),
+    updateSelectInput(
+      session,
+      "rubricID",
+      choices = setNames(rubrics_df$id, rubrics_df$label),
       selected = new_rubric_id
     )
 
@@ -1428,24 +1632,43 @@ server <- function(input, output, session) {
       showModal(modalDialog(
         sprintf(
           "Rubric %d has been used in %d review(s) and cannot be edited in place. Use 'Save as new rubric version' instead.",
-          selected_rid, as.integer(n_reviews)
+          selected_rid,
+          as.integer(n_reviews)
         ),
         title = "Rubric in use"
       ))
       return()
     }
 
-    norm <- function(x) if (is.na(x) || !nzchar(trimws(x))) NA_character_ else as.character(x)
+    norm <- function(x) {
+      if (is.na(x) || !nzchar(trimws(x))) NA_character_ else as.character(x)
+    }
 
     # Update a content row if any of the specified columns changed
-    update_row_if_changed <- function(row_id, ed_row, orig_df, id_col, table_name, cols) {
+    update_row_if_changed <- function(
+      row_id,
+      ed_row,
+      orig_df,
+      id_col,
+      table_name,
+      cols
+    ) {
       orig_row <- orig_df[orig_df[[id_col]] == row_id, ]
-      if (nrow(orig_row) == 0) return(invisible(NULL))
-      if (!any(sapply(cols, function(col) !identical(norm(ed_row[[col]]), norm(orig_row[[col]]))))) {
+      if (nrow(orig_row) == 0) {
+        return(invisible(NULL))
+      }
+      if (
+        !any(sapply(cols, function(col) {
+          !identical(norm(ed_row[[col]]), norm(orig_row[[col]]))
+        }))
+      ) {
         return(invisible(NULL))
       }
       upd <- as.data.frame(
-        c(list(id = row_id), setNames(lapply(cols, function(col) norm(ed_row[[col]])), cols)),
+        c(
+          list(id = row_id),
+          setNames(lapply(cols, function(col) norm(ed_row[[col]])), cols)
+        ),
         stringsAsFactors = FALSE
       )
       tbl_update(upd, conn, table_name, returnData = FALSE)
@@ -1455,8 +1678,12 @@ server <- function(input, output, session) {
     orig_comps <- rubric_comps_orig()
     for (i in seq_len(nrow(comps_ed))) {
       update_row_if_changed(
-        comps_ed$competency_id[i], comps_ed[i, ], orig_comps,
-        "competency_id", "competency", c("name", "description", "note")
+        comps_ed$competency_id[i],
+        comps_ed[i, ],
+        orig_comps,
+        "competency_id",
+        "competency",
+        c("name", "description", "note")
       )
     }
 
@@ -1464,8 +1691,12 @@ server <- function(input, output, session) {
     orig_specs <- rubric_spec_orig()
     for (i in seq_len(nrow(spec_ed))) {
       update_row_if_changed(
-        spec_ed$specificity_id[i], spec_ed[i, ], orig_specs,
-        "specificity_id", "specificity", c("value", "description", "example", "note")
+        spec_ed$specificity_id[i],
+        spec_ed[i, ],
+        orig_specs,
+        "specificity_id",
+        "specificity",
+        c("value", "description", "example", "note")
       )
     }
 
@@ -1473,8 +1704,12 @@ server <- function(input, output, session) {
     orig_utils <- rubric_util_orig()
     for (i in seq_len(nrow(util_ed))) {
       update_row_if_changed(
-        util_ed$utility_id[i], util_ed[i, ], orig_utils,
-        "utility_id", "utility", c("value", "description", "example", "note")
+        util_ed$utility_id[i],
+        util_ed[i, ],
+        orig_utils,
+        "utility_id",
+        "utility",
+        c("value", "description", "example", "note")
       )
     }
 
@@ -1482,14 +1717,118 @@ server <- function(input, output, session) {
     orig_sents <- rubric_sent_orig()
     for (i in seq_len(nrow(sent_ed))) {
       update_row_if_changed(
-        sent_ed$sentiment_id[i], sent_ed[i, ], orig_sents,
-        "sentiment_id", "sentiment", c("value", "description", "example", "note")
+        sent_ed$sentiment_id[i],
+        sent_ed[i, ],
+        orig_sents,
+        "sentiment_id",
+        "sentiment",
+        c("value", "description", "example", "note")
       )
     }
 
     rubric_refresh_trigger(rubric_refresh_trigger() + 1)
     showNotification(
       sprintf("Rubric %d updated in place", selected_rid),
+      type = "message"
+    )
+  })
+  #### ASSIGNMENT TAB ####
+
+  # Reactive: evaluations eligible to assign, respecting the checkbox filter.
+  # Always excluded: any eval already assigned with the latest rubric.
+  # Unchecked: also exclude evals that have any assignment (any rubric).
+  # Checked:   include evals assigned only under a different rubric.
+  assignment_eval_choices <- reactive({
+    all_evals <- tbl(conn, "evaluation") |>
+      select(id, complete, summary_flg) |>
+      collect() |>
+      arrange(id)
+
+    latest_assigned <- tbl(conn, "review_assignment") |>
+      filter(rubric_id == local(latest_rubric_id)) |>
+      pull(evaluation_id) |>
+      unique()
+
+    if (isTRUE(input$includeOtherRubric)) {
+      evals <- all_evals |> filter(!id %in% latest_assigned)
+    } else {
+      any_assigned <- tbl(conn, "review_assignment") |>
+        pull(evaluation_id) |>
+        unique()
+      evals <- all_evals |> filter(!id %in% any_assigned)
+    }
+
+    evals |>
+      mutate(
+        label = sprintf(
+          "%s (%s %s)",
+          id,
+          ifelse(complete == 1, "complete", "incomplete"),
+          ifelse(summary_flg == 1, "summative", "formative")
+        )
+      )
+  })
+
+  observe({
+    choices <- assignment_eval_choices()
+    updateSelectInput(
+      session,
+      "assignment_evalID",
+      choices = if (nrow(choices) > 0) {
+        setNames(choices$id, choices$label)
+      } else {
+        c()
+      }
+    )
+  })
+
+  output$assignment_evaluation <- renderUI({
+    req(input$assignment_evalID)
+    div(
+      HTML(
+        dbGetEvals(
+          ids = as.integer(input$assignment_evalID),
+          conn = conn,
+          redacted = T,
+          includeQuestions = T,
+          html = T,
+          subtitleTag = "b"
+        ) |>
+          pull(evaluation)
+      ),
+      style = "max-height: 70vh; overflow-y: auto;"
+    )
+  })
+
+  observeEvent(input$assignToAll, {
+    req(input$assignment_evalID)
+    eval_id <- as.integer(input$assignment_evalID)
+
+    all_reviewers <- tbl(conn, "reviewer") |>
+      select(id) |>
+      collect()
+
+    existing <- tbl(conn, "review_assignment") |>
+      filter(evaluation_id == eval_id) |>
+      pull(reviewer_id)
+
+    new_reviewers <- all_reviewers$id[!all_reviewers$id %in% existing]
+
+    for (rid in new_reviewers) {
+      dbReviewAssignment(
+        conn = conn,
+        reviewer_id = rid,
+        evaluation_id = eval_id,
+        commit = TRUE
+      )
+    }
+
+    showNotification(
+      sprintf(
+        "Assigned to %d reviewer(s). %d already had an assignment.",
+        length(new_reviewers),
+        length(existing)
+      ),
       type = "message"
     )
   })
