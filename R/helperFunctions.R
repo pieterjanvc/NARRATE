@@ -144,7 +144,7 @@ deployShinyApp <- function(db, gitHubBranch, dev = F) {
   file.copy("inst/review_app.R", file.path(root, "app.R"), overwrite = T)
   file.copy("renv.lock", file.path(root, "renv.lock"), overwrite = T)
   file.copy(db, file.path(root, "cfme.db"), overwrite = T)
-  devtools::install_github(paste0("pieterjanvc/CFME@", gitHubBranch))
+  pak::pak(paste0("pieterjanvc/CFME@", gitHubBranch))
   # Add CFME to lock file
   lockfile <- file.path(root, "renv.lock")
   renv::record(paste0("pieterjanvc/CFME@", gitHubBranch), lockfile = lockfile)

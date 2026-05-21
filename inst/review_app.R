@@ -8,7 +8,7 @@ library(DT)
 library(sqlife)
 
 
-dbInfo <- "../local/cfme_new.db"
+dbInfo <- "../local/cfme.db"
 # dbInfo <- "../local/cfme.db"
 # dbInfo <- "~/Downloads/cfme.db"
 

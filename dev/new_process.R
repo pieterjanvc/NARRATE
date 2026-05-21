@@ -1,7 +1,7 @@
 # ARGUMENTS
 # *********
 seed <- 20260504
-db_path <- "local/cfme_new.db"
+db_path <- "local/cfme.db"
 # file.remove(db_path)
 dbSetup(db_path, "inst/cfme.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))

@@ -1,4 +1,4 @@
-# devtools::install_github("pieterjanvc/sqlife", ref = "expandConnections")
+# pak::pak("pieterjanvc/sqlife", ref = "expandConnections")
 
 # Get latest pinned version from online (you need ot manually refresh)
 dbInfo <- "local/cfme.db"
