@@ -7,7 +7,7 @@
 status_codes(conn, table = NULL)
 }
 \arguments{
-\item{conn}{CFME database connection}
+\item{conn}{NARRATE database connection}
 
 \item{table}{Name of a database table or function to filter by (optional)}
 }

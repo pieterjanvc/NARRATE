@@ -8,14 +8,14 @@ library(DT)
 library(sqlife)
 
 
-dbInfo <- "../local/cfme.db"
-# dbInfo <- "../local/cfme.db"
-# dbInfo <- "~/Downloads/cfme.db"
+dbInfo <- "../local/narrate.db"
+# dbInfo <- "../local/narrate.db"
+# dbInfo <- "~/Downloads/narrate.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
-  dbInfo <- "cfme.db"
-  library(CFME)
+  dbInfo <- "narrate.db"
+  library(NARRATE)
   # These are the libraries that the app needs when deployed
 } else {
   devtools::load_all()
@@ -259,7 +259,7 @@ server <- function(input, output, session) {
     "dbMod",
     localFolder = "../local",
     tempFolder = "../local",
-    schema = "../inst/cfme.sql",
+    schema = "../inst/narrate.sql",
     useDB = dbInfo
   )
   # DB Connection

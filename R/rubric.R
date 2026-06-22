@@ -12,7 +12,7 @@
 #' @export
 rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
   if (is.null(rubric_path)) {
-    rubric_path <- system.file("rubric.md", package = "CFME")
+    rubric_path <- system.file("rubric.md", package = "NARRATE")
     if (rubric_path == "") rubric_path <- "inst/rubric.md"
   }
 
@@ -159,8 +159,8 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
     )
   }
   specificity_df <- make_score_df("Specificity")
-  utility_df     <- make_score_df("Utility")
-  sentiment_df   <- make_score_df("Sentiment")
+  utility_df <- make_score_df("Utility")
+  sentiment_df <- make_score_df("Sentiment")
 
   # --- Insert (skip rows whose content has not changed) ---
   existing_comp <- tbl(conn, "competency") |>
@@ -180,7 +180,10 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
   comp_id_map <- tbl(conn, "competency") |>
     select(id, name, description) |>
     collect() |>
-    inner_join(competency_df |> select(cID, name, description), by = c("name", "description")) |>
+    inner_join(
+      competency_df |> select(cID, name, description),
+      by = c("name", "description")
+    ) |>
     group_by(cID) |>
     filter(id == max(id)) |>
     ungroup() |>
@@ -213,7 +216,11 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
     existing <- tbl(conn, table_name) |>
       select(value, description, example) |>
       collect()
-    to_insert <- anti_join(df, existing, by = c("value", "description", "example"))
+    to_insert <- anti_join(
+      df,
+      existing,
+      by = c("value", "description", "example")
+    )
     if (nrow(to_insert) > 0) {
       tbl_insert(to_insert, conn, table_name, commit = commit)
     }
@@ -221,16 +228,16 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
   }
 
   to_insert_specificity <- insert_score_table(specificity_df, "specificity")
-  to_insert_utility     <- insert_score_table(utility_df,     "utility")
-  to_insert_sentiment   <- insert_score_table(sentiment_df,   "sentiment")
+  to_insert_utility <- insert_score_table(utility_df, "utility")
+  to_insert_sentiment <- insert_score_table(sentiment_df, "sentiment")
 
   invisible(list(
-    competency      = to_insert_comp,
+    competency = to_insert_comp,
     competency_diff = to_insert_diff,
-    specificity     = to_insert_specificity,
-    utility         = to_insert_utility,
-    sentiment       = to_insert_sentiment,
-    comp_ids        = unname(comp_id_map[as.character(comp_numbers)])
+    specificity = to_insert_specificity,
+    utility = to_insert_utility,
+    sentiment = to_insert_sentiment,
+    comp_ids = unname(comp_id_map[as.character(comp_numbers)])
   ))
 }
 
@@ -266,7 +273,12 @@ rubric_process <- function(conn, showWarning = FALSE) {
     !is.na(latest_rubric$prompt_score_id)
 
   if (!content_changed && already_linked) {
-    if (showWarning) message("Rubric content unchanged; using existing rubric ", latest_rubric$id)
+    if (showWarning) {
+      message(
+        "Rubric content unchanged; using existing rubric ",
+        latest_rubric$id
+      )
+    }
     return(latest_rubric)
   }
 
@@ -275,49 +287,78 @@ rubric_process <- function(conn, showWarning = FALSE) {
   # markdown order, so we reuse that result directly.
   latest_comp_ids <- inserted$comp_ids
 
-  latest_spec_ids <- tbl(conn, "specificity") |> arrange(as.integer(value)) |> pull(id)
-  latest_util_ids <- tbl(conn, "utility")     |> arrange(as.integer(value)) |> pull(id)
-  latest_sent_ids <- tbl(conn, "sentiment")   |> arrange(as.integer(value)) |> pull(id)
+  latest_spec_ids <- tbl(conn, "specificity") |>
+    arrange(as.integer(value)) |>
+    pull(id)
+  latest_util_ids <- tbl(conn, "utility") |>
+    arrange(as.integer(value)) |>
+    pull(id)
+  latest_sent_ids <- tbl(conn, "sentiment") |>
+    arrange(as.integer(value)) |>
+    pull(id)
 
   # Create the new rubric row (prompts filled in below)
   new_rubric <- tbl_insert(
     data.frame(prompt_extract_id = NA_integer_, prompt_score_id = NA_integer_),
-    conn, "rubric"
+    conn,
+    "rubric"
   )
   rubric_id <- new_rubric$id
 
   # Populate rubric join tables
   tbl_insert(
-    data.frame(rubric_id = rubric_id, competency_id = latest_comp_ids,
-               order = seq_along(latest_comp_ids)),
-    conn, "rubric_competency", returnData = FALSE
+    data.frame(
+      rubric_id = rubric_id,
+      competency_id = latest_comp_ids,
+      order = seq_along(latest_comp_ids)
+    ),
+    conn,
+    "rubric_competency",
+    returnData = FALSE
   )
   tbl_insert(
     data.frame(rubric_id = rubric_id, specificity_id = latest_spec_ids),
-    conn, "rubric_specificity", returnData = FALSE
+    conn,
+    "rubric_specificity",
+    returnData = FALSE
   )
   tbl_insert(
     data.frame(rubric_id = rubric_id, utility_id = latest_util_ids),
-    conn, "rubric_utility", returnData = FALSE
+    conn,
+    "rubric_utility",
+    returnData = FALSE
   )
   tbl_insert(
     data.frame(rubric_id = rubric_id, sentiment_id = latest_sent_ids),
-    conn, "rubric_sentiment", returnData = FALSE
+    conn,
+    "rubric_sentiment",
+    returnData = FALSE
   )
 
   # Generate filled prompts and store them
   prompts <- prompt_generate(conn, rubric_id = rubric_id)
-  prompt_extract_id <- dbAddPrompt(prompts$extract, conn, task = "comp_extract",
-                                   showWarning = showWarning)
-  prompt_score_id   <- dbAddPrompt(prompts$score,   conn, task = "comp_score",
-                                   showWarning = showWarning)
+  prompt_extract_id <- dbAddPrompt(
+    prompts$extract,
+    conn,
+    task = "comp_extract",
+    showWarning = showWarning
+  )
+  prompt_score_id <- dbAddPrompt(
+    prompts$score,
+    conn,
+    task = "comp_score",
+    showWarning = showWarning
+  )
 
   # Write prompt IDs back to the rubric row
   tbl_update(
-    data.frame(id = rubric_id,
-               prompt_extract_id = prompt_extract_id,
-               prompt_score_id   = prompt_score_id),
-    conn, "rubric"
+    data.frame(
+      id = rubric_id,
+      prompt_extract_id = prompt_extract_id,
+      prompt_score_id = prompt_score_id
+    ),
+    conn,
+    "rubric"
   )
 
   tbl(conn, "rubric") |> filter(id == local(rubric_id)) |> collect()

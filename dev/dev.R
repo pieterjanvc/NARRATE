@@ -1,9 +1,9 @@
 # pak::pak("pieterjanvc/sqlife", ref = "expandConnections")
 
 # Get latest pinned version from online (you need ot manually refresh)
-dbInfo <- "local/cfme.db"
+dbInfo <- "local/narrate.db"
 dbInfo <- "local/demo.db"
-# pin_dev_get("cfme_db_export", dbInfo) # Uncomment when new data is needed
+# pin_dev_get("narrate_db_export", dbInfo) # Uncomment when new data is needed
 usernames <- c("Demo", "TK", "AW")
 seed <- 54321
 
@@ -19,7 +19,7 @@ if (file.exists(dbInfo)) {
 }
 
 # Setup DB and add evaluation data
-dbSetup(dbInfo, "inst/cfme.sql", validateSchema = T)
+dbSetup(dbInfo, "inst/narrate.sql", validateSchema = T)
 conn <- dbGetConn(dbInfo)
 combined_data <- readxl::read_xlsx(
   "local/BIDMC_Med_Neuro_SPE_Comments_Dataset_07242025.xlsx"
@@ -71,7 +71,7 @@ dbAIreview(conn, llmReview)
 system(paste("xdg-open", normalizePath(dbInfo)), wait = F)
 system(paste('start ""', normalizePath(dbInfo)), wait = F)
 
-pin_dev_set("cfme_db_import", dbInfo)
+pin_dev_set("narrate_db_import", dbInfo)
 
 # Generate manual review doc
 # **************************
@@ -133,7 +133,7 @@ req <- request("https://azure-ai.hms.edu/openai/v1/responses") |>
 
 test <- resp_body_json(req)
 
-pin_dev_set("cfme_db_import", "local/demo.db")
+pin_dev_set("narrate_db_import", "local/demo.db")
 
-pin_dev_get("cfme_db_export", "local/test.db")
+pin_dev_get("narrate_db_export", "local/test.db")
 system(paste("xdg-open", normalizePath("local/test.db")), wait = F)

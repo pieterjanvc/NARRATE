@@ -9,7 +9,7 @@ deployShinyApp(db, gitHubBranch, dev = F)
 \arguments{
 \item{db}{Database to use}
 
-\item{gitHubBranch}{CFME branch}
+\item{gitHubBranch}{NARRATE branch}
 
 \item{dev}{Deploy to dev app}
 }

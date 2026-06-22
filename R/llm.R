@@ -1,5 +1,5 @@
 # ─── Generic Azure OpenAI API functions ──────────────────────────────────────
-# No project-specific logic. All functions are independent of the CFME project.
+# No project-specific logic. All functions are independent of the NARRATE project.
 
 `%||%` <- function(x, y) if (!is.null(x)) x else y
 
@@ -28,7 +28,9 @@ llm_responses <- function(
   endpoint = "https://azure-ai.hms.edu"
 ) {
   instructions <- ifelse(
-    missing(instructions), "You are a helpful AI assistant", instructions
+    missing(instructions),
+    "You are a helpful AI assistant",
+    instructions
   )
 
   req <- request(paste0(endpoint, "/openai/v1/responses")) |>
@@ -36,10 +38,16 @@ llm_responses <- function(
       "Content-Type" = "application/json",
       "api-key" = Sys.getenv("HMS_AZURE_API")
     ) |>
-    req_body_json(list(model = model, input = input, instructions = instructions)) |>
+    req_body_json(list(
+      model = model,
+      input = input,
+      instructions = instructions
+    )) |>
     req_perform()
 
-  if (resp_status(req) != 200) stop(req)
+  if (resp_status(req) != 200) {
+    stop(req)
+  }
 
   resp <- resp_body_json(req)
 
@@ -51,7 +59,8 @@ llm_responses <- function(
         resp$usage$input_tokens,
         resp$usage$output_tokens
       ),
-      log, append = TRUE
+      log,
+      append = TRUE
     )
   }
 
@@ -88,7 +97,9 @@ llm_chat_completion <- function(
 
   baseURL <- sprintf(
     "%s/openai/deployments/%s/chat/completions?api-version=%s",
-    endpoint, model, version
+    endpoint,
+    model,
+    version
   )
 
   req <- request(baseURL) |>
@@ -106,7 +117,9 @@ llm_chat_completion <- function(
     req_error(is_error = ~FALSE) |>
     req_perform()
 
-  if (resp_status(req) != 200) stop(req)
+  if (resp_status(req) != 200) {
+    stop(req)
+  }
 
   resp <- resp_body_json(req)
 
@@ -118,7 +131,8 @@ llm_chat_completion <- function(
         resp$usage$prompt_tokens,
         resp$usage$completion_tokens
       ),
-      log, append = TRUE
+      log,
+      append = TRUE
     )
   }
 
@@ -147,7 +161,8 @@ llm_batch_build_jsonl <- function(requests, model) {
         auto_unbox = TRUE
       )
     },
-    requests, names(requests),
+    requests,
+    names(requests),
     SIMPLIFY = TRUE
   )
   paste(lines, collapse = "\n")

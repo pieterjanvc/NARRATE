@@ -1,6 +1,6 @@
 ^renv$
 ^renv\.lock$
-^CFME\.Rproj$
+^NARRATE\.Rproj$
 ^.Renviron$
 ^\.Rproj\.user$
 ^dev$

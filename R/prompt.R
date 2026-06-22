@@ -23,7 +23,9 @@ prompt_generate <- function(conn, rubric_id = NULL) {
     rubric_id <- tbl(conn, "rubric") |>
       summarise(id = max(id, na.rm = TRUE)) |>
       pull(id)
-    if (length(rubric_id) == 0 || is.na(rubric_id)) stop("No rubric found in the database")
+    if (length(rubric_id) == 0 || is.na(rubric_id)) {
+      stop("No rubric found in the database")
+    }
   }
   rid <- rubric_id
 
@@ -39,14 +41,22 @@ prompt_generate <- function(conn, rubric_id = NULL) {
     collect()
 
   competencies <- paste(
-    sprintf("### %d. %s\n\n%s", comp_data$comp_order, comp_data$name, comp_data$description),
+    sprintf(
+      "### %d. %s\n\n%s",
+      comp_data$comp_order,
+      comp_data$name,
+      comp_data$description
+    ),
     collapse = "\n\n"
   )
 
   # --- Disambiguation (filtered to this rubric's competency set) ---
   # Use comp_data as an order lookup so no extra DB round-trip is needed
-  comp_ids  <- comp_data$competency_id
-  order_lookup <- setNames(comp_data$comp_order, as.character(comp_data$competency_id))
+  comp_ids <- comp_data$competency_id
+  order_lookup <- setNames(
+    comp_data$comp_order,
+    as.character(comp_data$competency_id)
+  )
 
   diff_data <- tbl(conn, "competency_diff") |>
     filter(
@@ -91,28 +101,41 @@ prompt_generate <- function(conn, rubric_id = NULL) {
 
   # --- Fill templates ---
   replacements <- list(
-    competencies   = competencies,
+    competencies = competencies,
     disambiguation = disambiguation,
-    specificity    = score_section("rubric_specificity", "specificity", "specificity_id"),
-    utility        = score_section("rubric_utility",     "utility",     "utility_id"),
-    sentiment      = score_section("rubric_sentiment",   "sentiment",   "sentiment_id")
+    specificity = score_section(
+      "rubric_specificity",
+      "specificity",
+      "specificity_id"
+    ),
+    utility = score_section("rubric_utility", "utility", "utility_id"),
+    sentiment = score_section("rubric_sentiment", "sentiment", "sentiment_id")
   )
 
   fill_template <- function(path) {
     result <- paste(readLines(path, warn = FALSE), collapse = "\n")
     for (key in names(replacements)) {
-      result <- gsub(paste0("{", key, "}"), replacements[[key]], result, fixed = TRUE)
+      result <- gsub(
+        paste0("{", key, "}"),
+        replacements[[key]],
+        result,
+        fixed = TRUE
+      )
     }
     result
   }
 
-  extract_path <- system.file("prompt_comp_extract.md", package = "CFME")
-  score_path   <- system.file("prompt_comp_score.md",   package = "CFME")
-  if (extract_path == "") extract_path <- "inst/prompt_comp_extract.md"
-  if (score_path   == "") score_path   <- "inst/prompt_comp_score.md"
+  extract_path <- system.file("prompt_comp_extract.md", package = "NARRATE")
+  score_path <- system.file("prompt_comp_score.md", package = "NARRATE")
+  if (extract_path == "") {
+    extract_path <- "inst/prompt_comp_extract.md"
+  }
+  if (score_path == "") {
+    score_path <- "inst/prompt_comp_score.md"
+  }
 
   list(
     extract = fill_template(extract_path),
-    score   = fill_template(score_path)
+    score = fill_template(score_path)
   )
 }

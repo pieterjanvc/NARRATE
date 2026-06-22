@@ -22,7 +22,7 @@ dbReviewAssignment(
 )
 }
 \arguments{
-\item{conn}{CFME database connection}
+\item{conn}{NARRATE database connection}
 
 \item{id}{(Optional) Review assignment ID. If not set, new entry is created}
 

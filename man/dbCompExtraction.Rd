@@ -13,7 +13,7 @@ dbCompExtraction(
 )
 }
 \arguments{
-\item{conn}{CFME database connection}
+\item{conn}{NARRATE database connection}
 
 \item{review_assignment_id}{Review assignment ID}
 

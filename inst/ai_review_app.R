@@ -9,8 +9,8 @@ dbInfo <- "/home/pj/Downloads/batch_test.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
-  dbInfo <- "../cfme.db"
-  library(CFME)
+  dbInfo <- "../narrate.db"
+  library(NARRATE)
 } else {
   devtools::load_all()
 }

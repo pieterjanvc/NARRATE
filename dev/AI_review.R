@@ -1,9 +1,9 @@
 # ARGUMENTS
 # *********
 seed <- 20260121
-db_path <- "local/cfme.db"
+db_path <- "local/narrate.db"
 
-dbSetup(db_path, "inst/cfme.sql")
+dbSetup(db_path, "inst/narrate.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
 
 # SETUP

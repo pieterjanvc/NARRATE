@@ -1,9 +1,10 @@
-# Core Faculty Model Evaluation (CFME) Project
+# NARRATE
+## Narrative Assessment Review and Refinement using AI to support Teaching and Evaluation
 
-This project is aiming to evaluate the Core Faculty Model implemented at Harvard
-Medical School (HMS) starting 2025. Using secure AI models, the quality of
-clinical clerkship evaluations will be checked against a rubric to test
-differences before and after model implementation
+
+Build an artificial intelligence powered platform to analyze the 
+quality of clerkship students’ narrative assessments and analyze formative and 
+summative narrative assessments.
 
 ## Data
 

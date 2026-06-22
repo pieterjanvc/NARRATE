@@ -15,7 +15,7 @@ dbReviewUpdate(
 )
 }
 \arguments{
-\item{conn}{CFME database connection}
+\item{conn}{NARRATE database connection}
 
 \item{statusCode}{Set the review_assignment status; run status_codes(conn, "review_assignment") for code details}
 

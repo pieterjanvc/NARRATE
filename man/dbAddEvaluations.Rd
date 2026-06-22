@@ -9,7 +9,7 @@ dbAddEvaluations(combined_data, dbPath, redactedOnly = F)
 \arguments{
 \item{combined_data}{Dataframe of the original data}
 
-\item{dbPath}{Path to a (new) CFME database}
+\item{dbPath}{Path to a (new) NARRATE database}
 
 \item{redactedOnly}{(Default = FALSE) If TRUE, only redacted evlaluations are
 put into the database the version with identifiers is omitted}
