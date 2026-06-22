@@ -173,7 +173,7 @@ CREATE TABLE "rubric_competency" (
 
 CREATE TABLE "specificity" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "value" TEXT NOT NULL,
+  "value" INTEGER NOT NULL,
   "description" TEXT NOT NULL,
   "example" TEXT,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
@@ -191,7 +191,7 @@ CREATE TABLE "rubric_specificity" (
 
 CREATE TABLE "utility" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "value" TEXT NOT NULL,
+  "value" INTEGER NOT NULL,
   "description" TEXT NOT NULL,
   "example" TEXT,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
@@ -209,7 +209,7 @@ CREATE TABLE "rubric_utility" (
 
 CREATE TABLE "sentiment" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-  "value" TEXT NOT NULL,
+  "value" INTEGER NOT NULL,
   "description" TEXT NOT NULL,
   "example" TEXT,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),

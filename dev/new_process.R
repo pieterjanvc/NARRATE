@@ -39,6 +39,7 @@ for (i in 2:5) {
     conn,
     reviewer_id = i,
     evaluation_id = evalSample,
+    rubric_id = 1,
     redacted = T,
     include_questions = T
   )

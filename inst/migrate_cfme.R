@@ -1,8 +1,6 @@
 # Migration: old narrate.db schema → new schema with rubric / split score tables
 # Run from the project root in RStudio (devtools::load_all() first is fine).
 #
-# Source : local/narrate.db    (old schema)
-# Output : local/narrate_new.db (new schema)
 #
 # Assumptions:
 #   - All existing review assignments belong to a single rubric (rubric_id = 1).
@@ -14,7 +12,7 @@
 library(RSQLite)
 library(dplyr)
 
-src_path <- "local/narrate.db"
+src_path <- "local/test.db"
 dst_path <- "local/narrate_new.db"
 schema_path <- "inst/narrate.sql"
 
@@ -148,11 +146,8 @@ link_scores <- function(score_table, rubric_table) {
   scores <- dbReadTable(dst, score_table) |> arrange(as.integer(value))
   rows <- data.frame(
     rubric_id = 1L,
-    setNames(list(scores$id), paste0(score_table, "_id")),
-    order = seq_len(nrow(scores))
+    setNames(list(scores$id), paste0(score_table, "_id"))
   )
-  # column name must match schema: specificity_id, utility_id, sentiment_id
-  colnames(rows)[2] <- paste0(score_table, "_id")
   dbWriteTable(dst, rubric_table, rows, append = TRUE)
   message(sprintf("  %-25s %d rows", rubric_table, nrow(rows)))
 }

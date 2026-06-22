@@ -85,13 +85,13 @@ prompt_generate <- function(conn, rubric_id = NULL) {
   score_section <- function(join_table, score_table, id_col) {
     rows <- tbl(conn, join_table) |>
       filter(rubric_id == local(rid)) |>
-      arrange(as.integer(value)) |>
       left_join(
         tbl(conn, score_table) |> select(id, value, description, example),
         by = setNames("id", id_col)
       ) |>
       select(value, description, example) |>
-      collect()
+      collect() |>
+      arrange(value)
     paste0(
       paste(sprintf("- %s: %s", rows$value, rows$description), collapse = "\n"),
       "\n\n**guiding examples**\n\n",

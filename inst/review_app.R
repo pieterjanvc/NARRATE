@@ -8,8 +8,8 @@ library(DT)
 library(sqlife)
 
 
-dbInfo <- "../local/narrate.db"
-# dbInfo <- "../local/narrate.db"
+dbInfo <- "../local/test.db"
+# dbInfo <- "../local/narrate_new.db"
 # dbInfo <- "~/Downloads/narrate.db"
 
 # This is the db used during deployment, see deployShinyApp()
@@ -312,13 +312,13 @@ server <- function(input, output, session) {
 
   specificity_opts <- tbl(conn, "specificity") |>
     collect() |>
-    arrange(as.integer(value))
+    arrange(value)
   utility_opts <- tbl(conn, "utility") |>
     collect() |>
-    arrange(as.integer(value))
+    arrange(value)
   sentiment_opts <- tbl(conn, "sentiment") |>
     collect() |>
-    arrange(as.integer(value))
+    arrange(value)
 
   # Per-review rubric score options — reloaded whenever the selected review changes.
   # Used in the REVIEW tab; global opts above are kept for the ANALYSIS tab.
@@ -337,7 +337,7 @@ server <- function(input, output, session) {
         ) |>
         select(id = specificity_id, value, description, example, note) |>
         collect() |>
-        arrange(as.integer(value)),
+        arrange(value),
       utility = tbl(conn, "rubric_utility") |>
         filter(rubric_id == local(rid)) |>
         left_join(
@@ -347,7 +347,7 @@ server <- function(input, output, session) {
         ) |>
         select(id = utility_id, value, description, example, note) |>
         collect() |>
-        arrange(as.integer(value)),
+        arrange(value),
       sentiment = tbl(conn, "rubric_sentiment") |>
         filter(rubric_id == local(rid)) |>
         left_join(
@@ -357,7 +357,7 @@ server <- function(input, output, session) {
         ) |>
         select(id = sentiment_id, value, description, example, note) |>
         collect() |>
-        arrange(as.integer(value))
+        arrange(value)
     )
   })
 
@@ -1249,12 +1249,12 @@ server <- function(input, output, session) {
       ) |>
       select(specificity_id, value, description, example, note) |>
       collect() |>
-      arrange(as.integer(value))
+      arrange(value)
     if (nrow(rows) == 0) {
       tbl(conn, "specificity") |>
         select(specificity_id = id, value, description, example, note) |>
         collect() |>
-        arrange(as.integer(value))
+        arrange(value)
     } else {
       rows
     }
@@ -1313,12 +1313,12 @@ server <- function(input, output, session) {
       ) |>
       select(utility_id, value, description, example, note) |>
       collect() |>
-      arrange(as.integer(value))
+      arrange(value)
     if (nrow(rows) == 0) {
       tbl(conn, "utility") |>
         select(utility_id = id, value, description, example, note) |>
         collect() |>
-        arrange(as.integer(value))
+        arrange(value)
     } else {
       rows
     }
@@ -1377,12 +1377,12 @@ server <- function(input, output, session) {
       ) |>
       select(sentiment_id, value, description, example, note) |>
       collect() |>
-      arrange(as.integer(value))
+      arrange(value)
     if (nrow(rows) == 0) {
       tbl(conn, "sentiment") |>
         select(sentiment_id = id, value, description, example, note) |>
         collect() |>
-        arrange(as.integer(value))
+        arrange(value)
     } else {
       rows
     }

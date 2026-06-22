@@ -4,7 +4,7 @@
 dbInfo <- "local/narrate.db"
 dbInfo <- "local/demo.db"
 # pin_dev_get("narrate_db_export", dbInfo) # Uncomment when new data is needed
-usernames <- c("Demo", "TK", "AW")
+usernames <- c("Demo", "TK", "AW", "KM")
 seed <- 54321
 
 # Prev seeds
@@ -135,5 +135,5 @@ test <- resp_body_json(req)
 
 pin_dev_set("narrate_db_import", "local/demo.db")
 
-pin_dev_get("narrate_db_export", "local/test.db")
+pin_dev_get("cfme_db_export", "local/test.db")
 system(paste("xdg-open", normalizePath("local/test.db")), wait = F)

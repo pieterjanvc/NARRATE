@@ -152,7 +152,7 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
   make_score_df <- function(cat) {
     idx <- score_categories == cat
     data.frame(
-      value = score_values[idx],
+      value = as.integer(score_values[idx]),
       description = score_descs[idx],
       example = score_examples[idx],
       stringsAsFactors = FALSE
@@ -262,7 +262,9 @@ rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
 #' @export
 rubric_process <- function(conn, showWarning = FALSE) {
   inserted <- rubric_parsing(conn)
-  content_changed <- any(sapply(inserted, nrow) > 0)
+  content_changed <- any(
+    sapply(inserted[names(inserted) != "comp_ids"], nrow) > 0
+  )
 
   latest_rubric <- tbl(conn, "rubric") |>
     filter(id == max(id, na.rm = TRUE)) |>
@@ -288,13 +290,16 @@ rubric_process <- function(conn, showWarning = FALSE) {
   latest_comp_ids <- inserted$comp_ids
 
   latest_spec_ids <- tbl(conn, "specificity") |>
-    arrange(as.integer(value)) |>
+    collect() |>
+    arrange(value) |>
     pull(id)
   latest_util_ids <- tbl(conn, "utility") |>
-    arrange(as.integer(value)) |>
+    collect() |>
+    arrange(value) |>
     pull(id)
   latest_sent_ids <- tbl(conn, "sentiment") |>
-    arrange(as.integer(value)) |>
+    collect() |>
+    arrange(value) |>
     pull(id)
 
   # Create the new rubric row (prompts filled in below)
