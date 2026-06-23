@@ -4,12 +4,14 @@
 
 library(RSQLite)
 
-src_path    <- "local/test.db"
-dst_path    <- "local/test_new.db"
+src_path <- "local/backup/narrate.db"
+dst_path <- "local/narrate-dev.db"
 schema_path <- "inst/narrate.sql"
 
 stopifnot(file.exists(src_path), file.exists(schema_path))
-if (file.exists(dst_path)) file.remove(dst_path)
+if (file.exists(dst_path)) {
+  file.remove(dst_path)
+}
 
 src <- dbConnect(SQLite(), src_path)
 dst <- dbConnect(SQLite(), dst_path)
@@ -17,7 +19,9 @@ dst <- dbConnect(SQLite(), dst_path)
 # ── 1. Apply new schema (includes status_codes seed data) ────────────────────
 
 sql_stmts <- paste(readLines(schema_path), collapse = "\n") |>
-  strsplit(";\n") |> unlist() |> trimws()
+  strsplit(";\n") |>
+  unlist() |>
+  trimws()
 sql_stmts <- sql_stmts[nchar(sql_stmts) > 0]
 
 dbExecute(dst, "PRAGMA foreign_keys = OFF")
@@ -26,7 +30,9 @@ for (stmt in sql_stmts) {
   if (!grepl("^--", stmt)) {
     tryCatch(
       dbExecute(dst, stmt),
-      error = function(e) message("Skipped (", conditionMessage(e), "): ", substr(stmt, 1, 60))
+      error = function(e) {
+        message("Skipped (", conditionMessage(e), "): ", substr(stmt, 1, 60))
+      }
     )
   }
 }
@@ -35,13 +41,30 @@ message("Schema applied.")
 # ── 2. Copy all user-data tables (status_codes seeded by schema, skip it) ────
 
 copy_tables <- c(
-  "student", "evaluator", "clerkship", "rotation", "evaluation",
-  "question", "answer", "reviewer", "prompt", "batch", "batch_review",
-  "rubric", "competency", "competency_diff", "rubric_competency",
-  "specificity", "rubric_specificity",
-  "utility",    "rubric_utility",
-  "sentiment",  "rubric_sentiment",
-  "review_assignment", "competency_score", "competency_text"
+  "student",
+  "evaluator",
+  "clerkship",
+  "rotation",
+  "evaluation",
+  "question",
+  "answer",
+  "reviewer",
+  "prompt",
+  "batch",
+  "batch_review",
+  "rubric",
+  "competency",
+  "competency_diff",
+  "rubric_competency",
+  "specificity",
+  "rubric_specificity",
+  "utility",
+  "rubric_utility",
+  "sentiment",
+  "rubric_sentiment",
+  "review_assignment",
+  "competency_score",
+  "competency_text"
 )
 
 for (tbl in copy_tables) {
@@ -61,7 +84,10 @@ for (tbl in copy_tables) {
 dbExecute(dst, "PRAGMA foreign_keys = ON")
 fk_violations <- dbGetQuery(dst, "PRAGMA foreign_key_check")
 if (nrow(fk_violations) > 0) {
-  warning(nrow(fk_violations), " FK violation(s) detected — review before swapping files.")
+  warning(
+    nrow(fk_violations),
+    " FK violation(s) detected — review before swapping files."
+  )
   print(fk_violations)
 } else {
   message("\nNo FK violations.")

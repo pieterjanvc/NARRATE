@@ -8,7 +8,7 @@ library(DT)
 library(sqlife)
 
 
-dbInfo <- "../local/test.db"
+dbInfo <- "../local/narrate-dev.db"
 # dbInfo <- "../local/narrate_new.db"
 # dbInfo <- "~/Downloads/narrate.db"
 
@@ -231,11 +231,12 @@ ui <- page_fluid(
       layout_columns(
         card(
           card_header("Select Evaluation"),
-          DTOutput("assignment_eval_table"),
+          div(DTOutput("assignment_eval_table")),
           checkboxInput(
             "includeOtherRubric",
             "Include previously reviewed with different rubric",
-            value = FALSE
+            value = FALSE,
+            width = "auto"
           ),
           actionButton("assignToAll", "Assign to all")
         ),
@@ -1765,6 +1766,11 @@ server <- function(input, output, session) {
       df,
       selection = "single",
       rownames = FALSE,
+      filter = list(
+        position = 'top',
+        clear = FALSE, # hide the X clear button
+        plain = FALSE # use styled inputs
+      ),
       options = list(pageLength = 15, dom = "tip", scrollX = TRUE)
     )
   })
