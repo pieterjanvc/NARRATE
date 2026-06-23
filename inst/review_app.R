@@ -231,12 +231,7 @@ ui <- page_fluid(
       layout_columns(
         card(
           card_header("Select Evaluation"),
-          selectInput(
-            "assignment_evalID",
-            "Evaluation",
-            choices = c(),
-            width = "100%"
-          ),
+          DTOutput("assignment_eval_table"),
           checkboxInput(
             "includeOtherRubric",
             "Include previously reviewed with different rubric",
@@ -1740,7 +1735,9 @@ server <- function(input, output, session) {
   # Checked:   include evals assigned only under a different rubric.
   assignment_eval_choices <- reactive({
     all_evals <- tbl(conn, "evaluation") |>
-      select(id, complete, summary_flg) |>
+      left_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
+      left_join(tbl(conn, "clerkship"), by = c("clerkship_id" = "id")) |>
+      select(id, complete, summary_flg, rotation_date, clerkship) |>
       collect() |>
       arrange(id)
 
@@ -1750,44 +1747,40 @@ server <- function(input, output, session) {
       unique()
 
     if (isTRUE(input$includeOtherRubric)) {
-      evals <- all_evals |> filter(!id %in% latest_assigned)
+      all_evals |> filter(!id %in% latest_assigned)
     } else {
       any_assigned <- tbl(conn, "review_assignment") |>
         pull(evaluation_id) |>
         unique()
-      evals <- all_evals |> filter(!id %in% any_assigned)
+      all_evals |> filter(!id %in% any_assigned)
     }
-
-    evals |>
-      mutate(
-        label = sprintf(
-          "%s (%s %s)",
-          id,
-          ifelse(complete == 1, "complete", "incomplete"),
-          ifelse(summary_flg == 1, "summative", "formative")
-        )
-      )
   })
 
-  observe({
-    choices <- assignment_eval_choices()
-    updateSelectInput(
-      session,
-      "assignment_evalID",
-      choices = if (nrow(choices) > 0) {
-        setNames(choices$id, choices$label)
-      } else {
-        c()
-      }
+  output$assignment_eval_table <- renderDT({
+    df <- assignment_eval_choices()
+    df$complete <- ifelse(df$complete == 1, "complete", "incomplete")
+    df$summary_flg <- ifelse(df$summary_flg == 1, "summative", "formative")
+    names(df) <- c("ID", "Complete", "Type", "Rotation Date", "Clerkship")
+    datatable(
+      df,
+      selection = "single",
+      rownames = FALSE,
+      options = list(pageLength = 15, dom = "tip", scrollX = TRUE)
     )
   })
 
+  selected_assignment_eval_id <- reactive({
+    row <- input$assignment_eval_table_rows_selected
+    req(row)
+    assignment_eval_choices()$id[row]
+  })
+
   output$assignment_evaluation <- renderUI({
-    req(input$assignment_evalID)
+    req(selected_assignment_eval_id())
     div(
       HTML(
         dbGetEvals(
-          ids = as.integer(input$assignment_evalID),
+          ids = selected_assignment_eval_id(),
           conn = conn,
           redacted = T,
           includeQuestions = T,
@@ -1801,8 +1794,8 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$assignToAll, {
-    req(input$assignment_evalID)
-    eval_id <- as.integer(input$assignment_evalID)
+    req(selected_assignment_eval_id())
+    eval_id <- selected_assignment_eval_id()
 
     all_reviewers <- tbl(conn, "reviewer") |>
       select(id) |>
