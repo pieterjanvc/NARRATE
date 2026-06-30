@@ -1,0 +1,11 @@
+{
+  // Open apps launched with the ▶ Play button in your default browser
+  "positron.runApp.previewMode": "external",
+
+  // Open localhost URLs (such as shiny::runApp()) in the external browser
+  // instead of the Positron Viewer
+  "positron.viewer.openLocalhostUrls": false,
+
+  // If you use Shiny for Python, this setting takes precedence
+  "shiny.previewType": "external"
+}

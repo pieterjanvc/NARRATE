@@ -1751,6 +1751,7 @@ server <- function(input, output, session) {
         core_faculty
       ) |>
       collect() |>
+      mutate(original_evaluator_id = as.character(original_evaluator_id)) |>
       arrange(id)
 
     latest_assigned <- tbl(conn, "review_assignment") |>

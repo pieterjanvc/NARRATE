@@ -1,7 +1,7 @@
 # ARGUMENTS
 # *********
 seed <- 20260504
-db_path <- "local/narrate-cf.db"
+db_path <- "local/narrate.db"
 # file.remove(db_path)
 dbSetup(db_path, "inst/narrate.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))

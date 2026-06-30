@@ -110,7 +110,8 @@ dbAddEvaluations <- function(combined_data, dbPath, redactedOnly = F) {
       rotation_date,
       first_nbme_score,
     ) |>
-    distinct()
+    distinct() |>
+    mutate(rotation_date = format(as.Date(rotation_date, tryFormats = c("%Y-%m-%d", "%m/%d/%Y")), "%Y-%m-%d"))
 
   check <- rotation |> group_by(student_id, clerkship_id) |> filter(n() > 1)
   if (nrow(check) > 0) {
