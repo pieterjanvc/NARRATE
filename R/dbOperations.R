@@ -388,11 +388,11 @@ dbAddPrompt <- function(
     )
 
     if (!missing(note)) {
-      toInsert$note = note
+      toInsert$note <- note
     }
 
     if (!is.null(task)) {
-      toInsert$task = task
+      toInsert$task <- task
     }
 
     promptID <- tbl_insert(toInsert, conn, "prompt", commit = commit) |>
@@ -705,9 +705,9 @@ dbReviewAssignment <- function(
 
   if (missing(id)) {
     # New
-    data$statusCode = 0
+    data$statusCode <- 0
     if (missing(redacted)) {
-      data$redacted = T
+      data$redacted <- T
     } else {
       redactedOnly <- tbl(conn, "answer") |>
         slice_sample(n = 5) |>
@@ -866,4 +866,65 @@ dbCompExtraction <- function(
   }
 
   return(result)
+}
+
+#' Add core faculty start dates and update core faculty status in evaluations
+#'
+#' @param file Path to a CSV file with columns original_evaluator_id and core_faculty_start
+#' @param conn A database connection (schema inst/narrate.sql)
+#'
+#' @import dplyr
+#' @import RSQLite
+#' @importFrom sqlife tbl_update
+#' @importFrom utils read.csv
+#'
+#' @returns TRUE invisibly on success
+#' @export
+#'
+dbAddCoreFaculty <- function(file, conn) {
+  csv <- read.csv(file, stringsAsFactors = FALSE)
+
+  # --- Step 1: update core_faculty_start in evaluator
+  evaluators <- tbl(conn, "evaluator") |>
+    filter(original_evaluator_id %in% local(csv$original_evaluator_id)) |>
+    collect()
+
+  to_update <- evaluators |>
+    inner_join(
+      csv |> select(original_evaluator_id, core_faculty_start),
+      by = "original_evaluator_id"
+    ) |>
+    mutate(core_faculty_start = core_faculty_start.y) |>
+    select(id, core_faculty_start)
+
+  if (nrow(to_update) > 0) {
+    tbl_update(to_update, conn, "evaluator", commit = FALSE)
+  }
+
+  # --- Step 2: update core_faculty in evaluation
+  # Re-read evaluators so we use the freshly updated core_faculty_start values
+  all_evaluators <- tbl(conn, "evaluator") |>
+    filter(!is.na(core_faculty_start)) |>
+    collect()
+
+  evaluations <- tbl(conn, "evaluation") |>
+    inner_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
+    collect() |>
+    left_join(
+      all_evaluators |> select(id, core_faculty_start),
+      by = c("evaluator_id" = "id")
+    ) |>
+    mutate(
+      core_faculty = as.integer(
+        !is.na(core_faculty_start) & rotation_date >= core_faculty_start
+      )
+    ) |>
+    select(id, core_faculty)
+
+  if (nrow(evaluations) > 0) {
+    tbl_update(evaluations, conn, "evaluation", commit = FALSE)
+  }
+
+  dbCommit(conn)
+  invisible(TRUE)
 }

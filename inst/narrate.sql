@@ -14,7 +14,8 @@ CREATE TABLE "evaluator" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "original_evaluator_id" INTEGER NOT NULL,
   "evaluator" TEXT NOT NULL,
-  "acad_title" TEXT
+  "acad_title" TEXT,
+  "core_faculty_start" TEXT
 );
 
 CREATE TABLE "clerkship" (
@@ -40,6 +41,7 @@ CREATE TABLE "evaluation" (
   "summary_flg" INTEGER NOT NULL,
   "complete" INTEGER,
   "acad_yr" TEXT,
+  "core_faculty" INTEGER,
   FOREIGN KEY ("rotation_id") REFERENCES "rotation"("id") ON DELETE CASCADE,
   FOREIGN KEY ("evaluator_id") REFERENCES "evaluator"("id") ON DELETE CASCADE
 );

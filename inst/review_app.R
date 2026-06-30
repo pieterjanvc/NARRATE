@@ -8,7 +8,7 @@ library(DT)
 library(sqlife)
 
 
-dbInfo <- "../local/narrate-dev.db"
+dbInfo <- "../local/narrate.db"
 # dbInfo <- "../local/narrate_new.db"
 # dbInfo <- "~/Downloads/narrate.db"
 
@@ -228,22 +228,20 @@ ui <- page_fluid(
     ),
     nav_panel(
       "ASSIGNMENT",
-      layout_columns(
-        card(
-          card_header("Select Evaluation"),
-          div(DTOutput("assignment_eval_table")),
-          checkboxInput(
-            "includeOtherRubric",
-            "Include previously reviewed with different rubric",
-            value = FALSE,
-            width = "auto"
-          ),
-          actionButton("assignToAll", "Assign to all")
+      card(
+        card_header("Select Evaluation"),
+        div(DTOutput("assignment_eval_table")),
+        checkboxInput(
+          "includeOtherRubric",
+          "Include previously reviewed with different rubric",
+          value = FALSE,
+          width = "auto"
         ),
-        card(
-          card_header("Student evaluation"),
-          uiOutput("assignment_evaluation")
-        )
+        actionButton("assignToAll", "Assign to all")
+      ),
+      card(
+        card_header("Student evaluation"),
+        uiOutput("assignment_evaluation")
       )
     )
   )
@@ -1738,7 +1736,20 @@ server <- function(input, output, session) {
     all_evals <- tbl(conn, "evaluation") |>
       left_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
       left_join(tbl(conn, "clerkship"), by = c("clerkship_id" = "id")) |>
-      select(id, complete, summary_flg, rotation_date, clerkship) |>
+      left_join(
+        tbl(conn, "evaluator") |>
+          select(evaluator_id = id, original_evaluator_id),
+        by = "evaluator_id"
+      ) |>
+      select(
+        id,
+        complete,
+        summary_flg,
+        rotation_date,
+        clerkship,
+        original_evaluator_id,
+        core_faculty
+      ) |>
       collect() |>
       arrange(id)
 
@@ -1761,7 +1772,16 @@ server <- function(input, output, session) {
     df <- assignment_eval_choices()
     df$complete <- ifelse(df$complete == 1, "complete", "incomplete")
     df$summary_flg <- ifelse(df$summary_flg == 1, "summative", "formative")
-    names(df) <- c("ID", "Complete", "Type", "Rotation Date", "Clerkship")
+    df$core_faculty <- !is.na(df$core_faculty) & df$core_faculty == 1
+    names(df) <- c(
+      "ID",
+      "Complete",
+      "Type",
+      "Rotation Date",
+      "Clerkship",
+      "Evaluator ID",
+      "Core Faculty"
+    )
     datatable(
       df,
       selection = "single",

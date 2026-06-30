@@ -4,8 +4,8 @@
 
 library(RSQLite)
 
-src_path <- "local/backup/narrate.db"
-dst_path <- "local/narrate-dev.db"
+src_path <- "local/backup/cfme_2026-06-30.db"
+dst_path <- "local/narrate.db"
 schema_path <- "inst/narrate.sql"
 
 stopifnot(file.exists(src_path), file.exists(schema_path))

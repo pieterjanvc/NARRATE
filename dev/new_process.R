@@ -1,7 +1,7 @@
 # ARGUMENTS
 # *********
 seed <- 20260504
-db_path <- "local/narrate.db"
+db_path <- "local/narrate-cf.db"
 # file.remove(db_path)
 dbSetup(db_path, "inst/narrate.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
@@ -20,6 +20,8 @@ combined_data <- readxl::read_xlsx(
 . <- dbReviewerHuman(conn, username = c("TK", "AW", "KM", "PJ"))
 # Process the rubric and generate prompts
 rubric_process(conn)
+
+dbAddCoreFaculty("local/core_faculty.csv", conn)
 
 # Assign the same n random to the AI
 set.seed(seed)
