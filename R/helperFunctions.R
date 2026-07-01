@@ -300,6 +300,9 @@ pin_dev_set <- function(
 #' @param db_path Path to the SQLite database
 #' @param feq_sec (Default = 60) Polling interval in seconds
 #' @param max_wait (Default = 2 hours) Maximum time in seconds before killing the process
+#' @param pkg_path (Default = here::here()) Path to the package source, loaded
+#'   with pkgload::load_all() in the background process so that dev-only
+#'   functions (e.g. llm_batch_status) are available there too
 #'
 #' @import callr keyring
 #'
@@ -309,12 +312,14 @@ batch_status_notify <- function(
   batch_id,
   db_path,
   feq_sec = 60,
-  max_wait = 2 * 3600
+  max_wait = 2 * 3600,
+  pkg_path = here::here()
 ) {
   auth <- keyring::key_get("PUSHOVER_API", "default") |> jsonlite::fromJSON()
 
   bg <- callr::r_bg(
-    func = function(batch_id, db_path, feq_sec, max_wait, auth) {
+    func = function(batch_id, db_path, feq_sec, max_wait, auth, pkg_path) {
+      pkgload::load_all(pkg_path, quiet = TRUE)
       conn <- sqlife::dbGetConn(db_path)
 
       start_time <- Sys.time()
@@ -377,7 +382,8 @@ batch_status_notify <- function(
       db_path = db_path,
       feq_sec = feq_sec,
       max_wait = max_wait,
-      auth = auth
+      auth = auth,
+      pkg_path = pkg_path
     )
   )
 

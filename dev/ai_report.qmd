@@ -1,0 +1,200 @@
+---
+title: "Ai Report"
+format: html
+execute:
+  echo: false
+---
+
+```{r}
+#| warning: false
+#| message: false
+library(dplyr)
+library(sqlife)
+library(RSQLite)
+library(knitr)
+library(ggplot2)
+
+dbInfo <- here::here("local", "narrate-ai.db")
+conn <- dbGetConn(dbInfo)
+```
+
+# What was analysed
+
+In this preliminary analysis we used our AI pipeline to review all the evaluations written by core faculty in Neurology and Medicine, before and after the start of the program in January 2025.
+
+```{r}
+tbl(conn, "evaluator") |>
+  filter(!is.na(core_faculty_start)) |>
+  select(evaluator_id = id, evaluator, core_faculty_start) |>
+  left_join(tbl(conn, "evaluation"), by = "evaluator_id") |>
+  count(evaluator, core_faculty_start, core_faculty) |>
+  collect() |>
+  mutate(period = ifelse(core_faculty == 1, "after", "before")) |>
+  select(-core_faculty) |>
+  tidyr::pivot_wider(names_from = period, values_from = n, values_fill = 0) |>
+  arrange(evaluator) |>
+  select(evaluator, core_faculty_start, before, after) |>
+  kable(col.names = c("Core Faculty", "Start Date", "Reviews Before", "Reviews After"))
+```
+
+# Competency overview
+
+The bar plot below shows an overview of how often competencies were detected across all reviews, stratified by before and after the start of the core faculty program. Counts are expressed as a proportion of the total number of reviews in each group, since the before and after groups differ in size.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 7
+period_totals <- tbl(conn, "review_assignment") |>
+  filter(statusCode == 5) |>
+  left_join(tbl(conn, "evaluation"), by = c("evaluation_id" = "id")) |>
+  count(core_faculty, name = "total") |>
+  collect() |>
+  mutate(period = ifelse(core_faculty == 1, "After", "Before")) |>
+  select(period, total)
+
+plot_data <- tbl(conn, "competency_score") |>
+  left_join(tbl(conn, "review_assignment"), by = c("review_assignment_id" = "id")) |>
+  filter(statusCode == 5, !is.na(specificity)) |>
+  left_join(tbl(conn, "evaluation"), by = c("evaluation_id" = "id")) |>
+  left_join(tbl(conn, "competency") |> select(competency_id = id, name), by = "competency_id") |>
+  count(name, specificity, core_faculty) |>
+  collect() |>
+  mutate(
+    name = factor(name),
+    period = ifelse(core_faculty == 1, "After", "Before"),
+    specificity = factor(
+      specificity,
+      levels = 1:4,
+      labels = c("1 - General", "2 - Non-specific", "3 - One example", "4 - Detailed")
+    )
+  ) |>
+  left_join(period_totals, by = "period") |>
+  mutate(
+    period = factor(period, levels = c("Before", "After")),
+    pct = n / total,
+    x_pos = as.numeric(name) + ifelse(period == "Before", -0.2, 0.2)
+  )
+
+ggplot(plot_data, aes(x = x_pos, y = pct, fill = specificity)) +
+  geom_col(width = 0.35) +
+  scale_x_continuous(breaks = seq_along(levels(plot_data$name)), labels = levels(plot_data$name)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    x = "Competency", y = "Share of Reviews", fill = "Specificity",
+    caption = "For each competency: left bar = before program start, right bar = after"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+# Quality score
+
+The graph below shows two boxplots with the overall quality scores stratified by before / after the start.
+
+Each review's quality score (0-100) is a weighted combination of three normalized components:
+
+$$
+\text{Score} = 100 \times \left( 0.35 \times \text{Coverage} + 0.45 \times \text{Specificity} + 0.20 \times \text{Utility} \right)
+$$
+
+- **Coverage** - share of the rubric's competencies that were detected: $n\_competencies / n\_total\_competencies$
+- **Specificity** - average specificity of the detected competencies, rescaled to the rubric's min/max range: $(avg\_specificity - spec\_min) / (spec\_max - spec\_min)$
+- **Utility** - the reviewer's utility score, rescaled to the rubric's min/max range: $(utility - util\_min) / (util\_max - util\_min)$
+
+Min/max ranges are looked up per rubric since the scales can differ between rubric versions.
+
+```{r}
+# Weights for quality score: coverage 35%, avg specificity 45%, utility 20%
+w_c <- 0.35
+w_s <- 0.45
+w_u <- 0.20
+
+comp_summary_all <- tbl(conn, "competency_score") |>
+  filter(!is.na(specificity)) |>
+  group_by(review_assignment_id) |>
+  summarise(
+    n_competencies = n(),
+    avg_specificity = mean(specificity, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+rubric_n_competencies <- tbl(conn, "rubric_competency") |>
+  count(rubric_id, name = "n_total_competencies")
+
+rubric_specificity_range <- tbl(conn, "rubric_specificity") |>
+  left_join(
+    tbl(conn, "specificity") |> select(specificity_id = id, value),
+    by = "specificity_id"
+  ) |>
+  group_by(rubric_id) |>
+  summarise(
+    spec_min = min(value, na.rm = TRUE),
+    spec_max = max(value, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+rubric_utility_range <- tbl(conn, "rubric_utility") |>
+  left_join(
+    tbl(conn, "utility") |> select(utility_id = id, value),
+    by = "utility_id"
+  ) |>
+  group_by(rubric_id) |>
+  summarise(
+    util_min = min(value, na.rm = TRUE),
+    util_max = max(value, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+quality_scores <- tbl(conn, "review_assignment") |>
+  filter(statusCode == 5) |>
+  left_join(comp_summary_all, by = c("id" = "review_assignment_id")) |>
+  left_join(rubric_n_competencies, by = "rubric_id") |>
+  left_join(rubric_specificity_range, by = "rubric_id") |>
+  left_join(rubric_utility_range, by = "rubric_id") |>
+  left_join(
+    tbl(conn, "evaluation") |> select(evaluation_id = id, core_faculty),
+    by = "evaluation_id"
+  ) |>
+  select(
+    id,
+    utility = utility_score_value,
+    n_competencies,
+    avg_specificity,
+    n_total_competencies,
+    spec_min,
+    spec_max,
+    util_min,
+    util_max,
+    core_faculty
+  ) |>
+  collect() |>
+  mutate(
+    n_competencies = ifelse(is.na(n_competencies), 0L, n_competencies),
+    coverage_norm = n_competencies / n_total_competencies,
+    specificity_norm = ifelse(
+      n_competencies > 0,
+      (avg_specificity - spec_min) / (spec_max - spec_min),
+      0
+    ),
+    utility_norm = ifelse(
+      !is.na(utility),
+      (utility - util_min) / (util_max - util_min),
+      0
+    ),
+    total_score = round(
+      (w_c * coverage_norm + w_s * specificity_norm + w_u * utility_norm) * 100,
+      1
+    ),
+    period = factor(ifelse(core_faculty == 1, "After", "Before"), levels = c("Before", "After"))
+  )
+
+ggplot(quality_scores, aes(x = period, y = total_score, fill = period)) +
+  geom_boxplot() +
+  labs(x = NULL, y = "Quality Score (0-100)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+dbFinish(conn)
+```

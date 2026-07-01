@@ -764,7 +764,9 @@ dbReviewAssignment <- function(
 #' @importFrom sqlife tbl_insert tbl_update tbl_delete
 #'
 #' @returns A list with success (T/F) and optionally competency_score and
-#' competency_text dataframes if return_tables = TRUE
+#' competency_text dataframes if return_tables = TRUE. success is FALSE
+#' without writing anything if comp_extraction contains duplicate cIndex
+#' values (the LLM should never emit the same cIndex twice).
 #' @export
 dbCompExtraction <- function(
   conn,
@@ -774,6 +776,11 @@ dbCompExtraction <- function(
   commit = T
 ) {
   ra_id <- review_assignment_id
+
+  new_indexes <- sapply(comp_extraction, "[[", "cIndex")
+  if (anyDuplicated(new_indexes) > 0) {
+    return(list(success = FALSE))
+  }
 
   # Resolve cIndex (order position) → competency_id via rubric_competency
   rubric_id <- tbl(conn, "review_assignment") |>
@@ -785,7 +792,6 @@ dbCompExtraction <- function(
     select(comp_order = order, competency_id) |>
     collect()
 
-  new_indexes <- sapply(comp_extraction, "[[", "cIndex")
   new_comp_ids <- order_map$competency_id[match(
     new_indexes,
     order_map$comp_order

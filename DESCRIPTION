@@ -29,6 +29,7 @@ Imports:
   jsonlite,
   keyring,
   pins,
+  pkgload,
   rlang,
   RSQLite,
   shiny,

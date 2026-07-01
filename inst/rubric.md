@@ -90,11 +90,12 @@ supporting text evidence as provided by the evaluator.
 
 ### Levels
 
-- 1: Competency is briefly mentioned and its description mostly contains general
-  qualifiers (nice, great, amazing, terrible, wonderful, …)
-- 2: Non-specific evidence is given without clear examples to support it
+- 1: Competency is mentioned only with general or broad qualifier with example
+  to support it
+- 2: Detail about competency is mentioned without example to support it
 - 3: At least one specific example supports the competency
-- 4: Multiple or one very detailed example providing exceptional support
+- 4: At least one very detailed example of a specific encounter providing
+  exceptional support
 
 ### Guiding examples
 
@@ -117,10 +118,11 @@ Evaluator sentiment score for the overall review
 
 ### Levels
 
-- 1: low/not useful: Uses 3rd person, minimal specific information, often vague
-- 2: moderately useful: Specific to the student but hard to act upon
-- 3: highly useful: Very specific and directly applicable to professional
-  improvement
+- 1: low/not useful: too vague or general to act upon
+- 2: moderately useful: includes student-specific recommendations for
+  maintaining or improving performance but recommendations are hard to act upon
+- 3: highly useful: student-specific, actionable recommendations for maintaining
+  or improving performance
 
 ### Guiding examples
 
@@ -137,19 +139,22 @@ Evaluator sentiment score for the overall review
 
 ### Levels
 
-- 1: clearly negative or red flags
-- 2: slightly negative or coded language indicating potential criticism
-- 3: Not enough information to indicate sentiment
-- 4: generic positive language (e.g. empty praise)
-- 5: specific positive language indicating the reviewer's effort to make this
-  particular student stand out
+- 1: strongly negative (e.g. red flags)
+- 2: negative (e.g. coded language indicating potential criticism)
+- 3: Neutral or not enough information to indicate sentiment
+- 4: positive (e.g. empty praise or clearly positive but generic)
+- 5: strongly positive (e.g. signaling exceptional student)
 
 ### Guiding examples
 
-- 1: did not respond well to feedback
-- 2: should review disease management guidelines to help improve clinical
-  decision making
-- 3: _No example possible_
-- 4: Was wonderful to work with!
+- 1: did not have adequate fund of knowledge
+- 2: I would recommend that she continue practicing how to identify and
+  prioritize clinically relevant information when documenting (such as which
+  symptoms patients report that are actually clinically relevant to the current
+  presentation or not).
+- 3: Her solid foundation in medical knowledge is evident
+  - Continue reading
+- 4: Was a pleasure to work with! Strong performance.
 - 5: The level of care taken to review each patient case set her apart from most
-  other interns I have worked with over the years
+  other interns I have worked with over the years. She's working at the level of
+  an PGY1

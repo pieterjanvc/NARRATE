@@ -4,7 +4,13 @@
 \alias{batch_status_notify}
 \title{Monitor a batch job and send a PushOver notification when complete}
 \usage{
-batch_status_notify(batch_id, db_path, feq_sec = 60, max_wait = 2 * 3600)
+batch_status_notify(
+  batch_id,
+  db_path,
+  feq_sec = 60,
+  max_wait = 2 * 3600,
+  pkg_path = here::here()
+)
 }
 \arguments{
 \item{batch_id}{ID of the batch to monitor}
@@ -14,6 +20,10 @@ batch_status_notify(batch_id, db_path, feq_sec = 60, max_wait = 2 * 3600)
 \item{feq_sec}{(Default = 60) Polling interval in seconds}
 
 \item{max_wait}{(Default = 2 hours) Maximum time in seconds before killing the process}
+
+\item{pkg_path}{(Default = here::here()) Path to the package source, loaded
+with pkgload::load_all() in the background process so that dev-only
+functions (e.g. llm_batch_status) are available there too}
 }
 \value{
 Invisibly returns the background process handle (callr r_bg object)

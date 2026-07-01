@@ -13,3 +13,5 @@ deploy/*
 /.quarto/
 **/*.quarto_ipynb
 .claude/settings.local.json
+
+**/*_files

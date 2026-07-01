@@ -5,7 +5,7 @@ library(DT)
 library(sqlife)
 
 # dbInfo <- "../local/clean_up.db"
-dbInfo <- "/home/pj/Downloads/batch_test.db"
+dbInfo <- "../local/narrate-ai.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
@@ -14,42 +14,6 @@ if (!file.exists(dbInfo)) {
 } else {
   devtools::load_all()
 }
-
-# Competency names as defined in inst/prompt_comp_extract.md
-competency_names <- c(
-  "Medical Knowledge",
-  "Medical History Taking and Physical Examination",
-  "Provide Effective Oral and Written Professional Communication",
-  "Clinical Reasoning and Decision Making",
-  "Interpersonal and Communication Skills",
-  "Scholarly Inquiry and Evidence-Based Medicine Integration",
-  "Professionalism",
-  "Interprofessional and Team-Based Care"
-)
-
-# Specificity score labels from inst/prompt_comp_score.md
-specificity_labels <- c(
-  "1 - General qualifiers only",
-  "2 - Non-specific evidence",
-  "3 - At least one specific example",
-  "4 - Multiple or detailed examples"
-)
-
-# Utility score labels from inst/prompt_comp_score.md
-utility_labels <- c(
-  "1 - Low / not useful",
-  "2 - Moderately useful",
-  "3 - Highly useful"
-)
-
-# Sentiment score labels from inst/prompt_comp_score.md
-sentiment_labels <- c(
-  "1 - Clearly negative or red flags",
-  "2 - Slightly negative or coded language",
-  "3 - Not enough information",
-  "4 - Generic positive language",
-  "5 - Specific positive language"
-)
 
 # AI-completed status codes for review_assignment (statusCode %in% c(-1, 2, 5))
 ai_complete_codes <- c(-1L, 2L, 5L)
@@ -72,12 +36,7 @@ ui <- page_fluid(
     col_widths = 12,
     card(
       card_header("AI Review Viewer"),
-      selectInput(
-        "reviewID",
-        "Select completed AI review assignment",
-        choices = c(),
-        width = "100%"
-      )
+      div(DTOutput("reviewsTable"))
     )
   ),
 
@@ -102,9 +61,8 @@ ui <- page_fluid(
   ),
 
   card(
-    fill = FALSE,
     card_header("Competencies"),
-    DTOutput("competencyTable")
+    div(DTOutput("competencyTable"))
   )
 )
 
@@ -125,6 +83,36 @@ server <- function(input, output, session) {
       .groups = "drop"
     )
 
+  # Rubric content (competency count, specificity/utility value ranges) is
+  # versioned in the DB and can differ between rubric_id's, so normalization
+  # ranges are looked up per rubric rather than assumed fixed.
+  rubric_n_competencies <- tbl(conn, "rubric_competency") |>
+    count(rubric_id, name = "n_total_competencies")
+
+  rubric_specificity_range <- tbl(conn, "rubric_specificity") |>
+    left_join(
+      tbl(conn, "specificity") |> select(specificity_id = id, value),
+      by = "specificity_id"
+    ) |>
+    group_by(rubric_id) |>
+    summarise(
+      spec_min = min(value, na.rm = TRUE),
+      spec_max = max(value, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  rubric_utility_range <- tbl(conn, "rubric_utility") |>
+    left_join(
+      tbl(conn, "utility") |> select(utility_id = id, value),
+      by = "utility_id"
+    ) |>
+    group_by(rubric_id) |>
+    summarise(
+      util_min = min(value, na.rm = TRUE),
+      util_max = max(value, na.rm = TRUE),
+      .groups = "drop"
+    )
+
   # Populate the dropdown with AI-completed review assignments
   ai_reviews <<- tbl(conn, "review_assignment") |>
     filter(statusCode %in% ai_complete_codes) |>
@@ -135,66 +123,92 @@ server <- function(input, output, session) {
       by = "reviewer_id"
     ) |>
     left_join(comp_summary_all, by = c("id" = "review_assignment_id")) |>
+    left_join(rubric_n_competencies, by = "rubric_id") |>
+    left_join(rubric_specificity_range, by = "rubric_id") |>
+    left_join(rubric_utility_range, by = "rubric_id") |>
     left_join(
       tbl(conn, "evaluation") |>
-        select(evaluation_id = id, evaluator_id, summary_flg),
+        select(evaluation_id = id, evaluator_id, summary_flg, rotation_id),
       by = "evaluation_id"
     ) |>
     left_join(
       tbl(conn, "evaluator") |> select(evaluator_id = id, evaluator),
       by = "evaluator_id"
     ) |>
+    left_join(
+      tbl(conn, "rotation") |> select(rotation_id = id, rotation_date),
+      by = "rotation_id"
+    ) |>
     select(
       id,
       evaluation_id,
       evaluator,
       summary_flg,
-      utility,
+      rotation_date,
+      utility = utility_score_value,
       n_competencies,
-      avg_specificity
+      avg_specificity,
+      n_total_competencies,
+      spec_min,
+      spec_max,
+      util_min,
+      util_max
     ) |>
     collect() |>
     mutate(
       n_competencies = ifelse(is.na(n_competencies), 0L, n_competencies),
-      avg_specificity = ifelse(
-        is.na(avg_specificity),
-        NA_real_,
-        avg_specificity
-      ),
-      coverage_norm = n_competencies / 8,
+      coverage_norm = n_competencies / n_total_competencies,
       specificity_norm = ifelse(
         n_competencies > 0,
-        (avg_specificity - 1) / 3,
+        (avg_specificity - spec_min) / (spec_max - spec_min),
         0
       ),
-      utility_norm = ifelse(!is.na(utility), (utility - 1) / 2, 0),
+      utility_norm = ifelse(
+        !is.na(utility),
+        (utility - util_min) / (util_max - util_min),
+        0
+      ),
       total_score = round(
         (w_c * coverage_norm + w_s * specificity_norm + w_u * utility_norm) *
           100,
         1
-      ),
-      label = sprintf(
-        "[%.1f] %s%s - ID %i",
-        total_score,
-        evaluator,
-        ifelse(summary_flg == 1L, " (Summary)", ""),
-        evaluation_id
       )
     ) |>
     arrange(desc(total_score))
 
   random_sel <- sample(1:nrow(ai_reviews), 100) |> sort()
+  display_reviews <- ai_reviews[random_sel, ]
 
-  updateSelectInput(
-    session,
-    "reviewID",
-    choices = setNames(ai_reviews$id[random_sel], ai_reviews$label[random_sel])
-  )
+  # Selection table: one row per AI review assignment. input$reviewsTable_rows_selected
+  # refers to display_reviews' row order regardless of any client-side sort/search.
+  output$reviewsTable <- renderDT({
+    datatable(
+      display_reviews |>
+        mutate(Summary = ifelse(summary_flg == 1L, "Yes", "No")) |>
+        select(
+          Score = total_score,
+          Evaluator = evaluator,
+          Summary,
+          `Evaluation ID` = evaluation_id,
+          `Rotation Date` = rotation_date
+        ),
+      selection = "single",
+      rownames = FALSE,
+      options = list(pageLength = 15, order = list(list(0, "desc")))
+    )
+  })
 
-  # Reactive: fetch all data for the selected review
+  # Reactive: the review_assignment id behind the currently selected table row
+  rid_selected <- reactive({
+    req(input$reviewsTable_rows_selected)
+    display_reviews$id[input$reviewsTable_rows_selected]
+  })
+
+  # Reactive: fetch all data for the selected review, including the
+  # competency names/order and score-level descriptions for the specific
+  # rubric this assignment was scored against.
   selected_review <- reactive({
-    req(input$reviewID)
-    rid <- as.integer(input$reviewID)
+    rid <- rid_selected()
 
     assignment <- tbl(conn, "review_assignment") |>
       filter(id == rid) |>
@@ -208,17 +222,59 @@ server <- function(input, output, session) {
       filter(competency_score_id %in% local(comp_scores$id)) |>
       collect()
 
+    rubric_id <- assignment$rubric_id
+
+    competency_map <- tbl(conn, "rubric_competency") |>
+      filter(rubric_id == local(rubric_id)) |>
+      select(competency_id, comp_order = order) |>
+      left_join(
+        tbl(conn, "competency") |> select(competency_id = id, name),
+        by = "competency_id"
+      ) |>
+      collect()
+
+    specificity_map <- tbl(conn, "rubric_specificity") |>
+      filter(rubric_id == local(rubric_id)) |>
+      select(specificity_id) |>
+      left_join(
+        tbl(conn, "specificity") |>
+          select(specificity_id = id, value, description),
+        by = "specificity_id"
+      ) |>
+      collect()
+
+    utility_map <- tbl(conn, "rubric_utility") |>
+      filter(rubric_id == local(rubric_id)) |>
+      select(utility_id) |>
+      left_join(
+        tbl(conn, "utility") |> select(utility_id = id, value, description),
+        by = "utility_id"
+      ) |>
+      collect()
+
+    sentiment_map <- tbl(conn, "rubric_sentiment") |>
+      filter(rubric_id == local(rubric_id)) |>
+      select(sentiment_id) |>
+      left_join(
+        tbl(conn, "sentiment") |> select(sentiment_id = id, value, description),
+        by = "sentiment_id"
+      ) |>
+      collect()
+
     list(
       assignment = assignment,
       comp_scores = comp_scores,
-      comp_text = comp_text
+      comp_text = comp_text,
+      competency_map = competency_map,
+      specificity_map = specificity_map,
+      utility_map = utility_map,
+      sentiment_map = sentiment_map
     )
   })
 
   # Left panel: evaluation text
   output$evaluation <- renderUI({
-    req(input$reviewID)
-    rid <- as.integer(input$reviewID)
+    rid <- rid_selected()
 
     eval_id <- tbl(conn, "review_assignment") |>
       filter(id == rid) |>
@@ -252,19 +308,24 @@ server <- function(input, output, session) {
       group_by(competency_id) |>
       summarise(text = paste(text_match, collapse = "; "), .groups = "drop")
 
+    spec_desc <- setNames(
+      data$specificity_map$description,
+      data$specificity_map$value
+    )
+
     table_data <- data$comp_scores |>
-      select(id = competency_id, specificity) |>
-      left_join(comp_text_summary, by = c("id" = "competency_id")) |>
+      select(competency_id, specificity) |>
+      left_join(data$competency_map, by = "competency_id") |>
+      left_join(comp_text_summary, by = "competency_id") |>
       mutate(
-        name = competency_names[id],
         specificity = ifelse(
-          is.na(specificity) | specificity < 1L | specificity > 4L,
+          is.na(specificity) | !as.character(specificity) %in% names(spec_desc),
           as.character(specificity),
-          specificity_labels[specificity]
+          spec_desc[as.character(specificity)]
         )
       ) |>
-      select(id, name, specificity, text) |>
-      arrange(id)
+      arrange(comp_order) |>
+      select(id = competency_id, name, specificity, text)
 
     DT::datatable(
       table_data,
@@ -283,25 +344,36 @@ server <- function(input, output, session) {
 
   # Right bottom card: overall scores
   output$overallScores <- renderUI({
-    a <- selected_review()$assignment
-    rid <- as.integer(input$reviewID)
+    data <- selected_review()
+    a <- data$assignment
+    rid <- rid_selected()
 
-    utility_val <- a$utility
-    sentiment_val <- a$sentiment
+    utility_val <- a$utility_score_value
+    sentiment_val <- a$sentiment_score_value
     score_row <- ai_reviews[ai_reviews$id == rid, ]
 
+    util_desc <- setNames(data$utility_map$description, data$utility_map$value)
+    sent_desc <- setNames(
+      data$sentiment_map$description,
+      data$sentiment_map$value
+    )
+
     utility_txt <- if (
-      !is.na(utility_val) && utility_val >= 1L && utility_val <= 3L
+      !is.na(utility_val) && as.character(utility_val) %in% names(util_desc)
     ) {
-      utility_labels[utility_val]
+      sprintf("%d - %s", utility_val, util_desc[[as.character(utility_val)]])
     } else {
       paste("Score:", utility_val)
     }
 
     sentiment_txt <- if (
-      !is.na(sentiment_val) && sentiment_val >= 1L && sentiment_val <= 5L
+      !is.na(sentiment_val) && as.character(sentiment_val) %in% names(sent_desc)
     ) {
-      sentiment_labels[sentiment_val]
+      sprintf(
+        "%d - %s",
+        sentiment_val,
+        sent_desc[[as.character(sentiment_val)]]
+      )
     } else {
       paste("Score:", sentiment_val)
     }
@@ -319,28 +391,31 @@ server <- function(input, output, session) {
           tags$tr(
             tags$td("Coverage (N competencies)"),
             tags$td(sprintf(
-              "%d / 8  \u2192  %.0f%%",
+              "%d / %d  \u2192  %.0f%%",
               score_row$n_competencies,
+              score_row$n_total_competencies,
               score_row$coverage_norm * 100
             ))
           ),
           tags$tr(
             tags$td("Avg Specificity"),
             tags$td(sprintf(
-              "%.2f / 4  \u2192  %.0f%%",
+              "%.2f / %d  \u2192  %.0f%%",
               ifelse(
                 is.na(score_row$avg_specificity),
                 0,
                 score_row$avg_specificity
               ),
+              score_row$spec_max,
               score_row$specificity_norm * 100
             ))
           ),
           tags$tr(
             tags$td("Utility"),
             tags$td(sprintf(
-              "%d / 3  \u2192  %.0f%%",
+              "%d / %d  \u2192  %.0f%%",
               utility_val,
+              score_row$util_max,
               score_row$utility_norm * 100
             ))
           ),
