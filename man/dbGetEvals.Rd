@@ -16,7 +16,7 @@ dbGetEvals(
 \arguments{
 \item{ids}{A vector of evaluation IDs to retrieve text for}
 
-\item{conn}{CFME database connection}
+\item{conn}{NARRATE database connection}
 
 \item{redacted}{(Default = TRUE) Show redacted text.
 Can also be a vector of length ids}

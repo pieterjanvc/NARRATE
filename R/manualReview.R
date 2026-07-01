@@ -26,7 +26,7 @@ reviewDoc <- function(
   includeClerkship = T,
   html = F
 ) {
-  conn <- dbGetConn(dbInfo)
+  conn <- if (dbIsSQLite(dbInfo)) dbInfo else dbGetConn(dbInfo)
 
   # Get / check evaluation_ids
   if (missing(evaluation_ids)) {

@@ -15,9 +15,9 @@ dbReviewUpdate(
 )
 }
 \arguments{
-\item{conn}{CFME database connection}
+\item{conn}{NARRATE database connection}
 
-\item{statusCode}{Set the review status (0 = new,1 = in progress,2 = complete, -1 = flagged)}
+\item{statusCode}{Set the review_assignment status; run status_codes(conn, "review_assignment") for code details}
 
 \item{overallScores}{Data frame matching review_assignment table which
 contains the overall scores}

@@ -9,7 +9,7 @@ dbAddPrompt(prompt, conn, note, task = NULL, commit = T, showWarning = T)
 \arguments{
 \item{prompt}{Single string of system prompt text}
 
-\item{conn}{CFME database connection}
+\item{conn}{NARRATE database connection}
 
 \item{note}{(Optional) Note about this prompt}
 

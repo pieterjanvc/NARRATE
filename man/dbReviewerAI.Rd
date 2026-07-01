@@ -7,7 +7,7 @@
 dbReviewerAI(conn, id, model, note, commit = T)
 }
 \arguments{
-\item{conn}{CFME database connection}
+\item{conn}{NARRATE database connection}
 
 \item{id}{(Optional) Reviewer id. If provided this means updating existing.
 If not, a new reviewer will be created}

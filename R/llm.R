@@ -1,195 +1,25 @@
-#' Check if the LLM response is in the expected CSV format
-#'
-#' @param string To parse as CSV
-#' @param reviewID (Optional) Review assingment ID to add to the output
-#'
-#' @importFrom stringr str_replace_all
-#' @importFrom jsonlite fromJSON
-#'
-#' @returns List with two elements
-#'  - statusCode: 0 not valid CSV, 1 column names / number issue,
-#'     2 column type error, 3 expected CSV format
-#'  - data: List of 3 data frames with results for statusCode 3, NULL otherwise
-#' @export
-#'
-llm_csv_response <- function(string, reviewID) {
-  suppressWarnings({
-    tryCatch(
-      {
-        # Try and load as list
-        check <- fromJSON(string, simplifyVector = T, simplifyDataFrame = F)
+# ─── Generic Azure OpenAI API functions ──────────────────────────────────────
+# No project-specific logic. All functions are independent of the NARRATE project.
 
-        # Check the names
-        if (!all(names(check) %in% c("compScores", "util", "sent"))) {
-          return(list(statusCode = 1, data = NULL))
-        }
+`%||%` <- function(x, y) if (!is.null(x)) x else y
 
-        if (
-          !all(names(check$compScores) %in% c("cID", "specificity", "text"))
-        ) {
-          return(list(statusCode = 1, data = NULL))
-        }
+# ─── Real-time API calls ──────────────────────────────────────────────────────
 
-        # Check integer values
-        allInts <- all(
-          unlist(c(
-            sapply(check$compScores, "[[", "cID"),
-            sapply(check$compScores, "[[", "specificity"),
-            check[c("util", "sent")]
-          )) %%
-            1 ==
-            0
-        )
-        if (!allInts) {
-          return(list(statusCode = 2, data = NULL))
-        }
-
-        # Get global eval
-        globalEval <- data.frame(util = check$util, sent = check$sent)
-
-        # Get comp scores
-        compScores <- data.frame(
-          cID = sapply(check$compScores, "[[", "cID"),
-          specificity = sapply(check$compScores, "[[", "specificity")
-        )
-
-        # Get comp text
-        compText <- do.call(
-          rbind,
-          lapply(check$compScores, function(x) {
-            data.frame(cID = x$cID, text_match = x$text)
-          })
-        )
-
-        # Add review_assignment_id if provided
-        if (!missing(reviewID)) {
-          globalEval <- globalEval |> mutate(id = reviewID, .before = util)
-          compScores <- compScores |> mutate(id = reviewID, .before = cID)
-          compText <- compText |> mutate(id = reviewID, .before = cID)
-        }
-
-        return(list(
-          statusCode = 3,
-          data = list(
-            overallScores = globalEval,
-            compScores = compScores,
-            compText = compText
-          )
-        ))
-      },
-      error = function(e) {
-        return(list(statusCode = 0, data = NULL))
-      }
-    )
-  })
-}
-
-#' Call an Azure chat completion LLM
+#' Call the Azure OpenAI responses API
 #'
 #' Note that this function expects an environment variable HMS_AZURE_API
-#' that contains the API key You can set this up using
+#' that contains the API key. You can set this up using
 #' `Sys.setenv(HMS_AZURE_API = "API token here")`
 #'
-#' @param user User prompt
-#' @param system Default = "You are a helpful AI assistant". System prompt
-#' @param log If set, the token usage is kept track of in this CSV file
-#' @param model Default = gpt-4o-1120. LLM model to use
-#' @param maxTokens Default = 500. Max Number of tokens to return
-#' @param version Default = 2024-10-21.
-#' @param endpoint Default = https://azure-ai.hms.edu. Azure endpoint
+#' @param input User input text
+#' @param instructions System instructions. Default = "You are a helpful AI assistant"
+#' @param log If set, token usage is appended to this CSV file
+#' @param model Default = gpt-5-mini. Azure deployment name
+#' @param endpoint Default = https://azure-ai.hms.edu. Azure endpoint base URL
 #'
 #' @import httr2
-#'
-#' @returns LLM Response object (list).
-#'
-#' If a log file is et a line is added to a CSV file with columns
-#' timestamp, promptTokens and responseTokens (headers not included)
-#'
+#' @returns Parsed response list
 #' @export
-#'
-llm_chat_completion <- function(
-  user,
-  system,
-  log,
-  model = "gpt-4o-1120",
-  maxTokens = 500,
-  version = "2024-10-21",
-  endpoint = "https://azure-ai.hms.edu"
-) {
-  # API info https://learn.microsoft.com/en-us/azure/ai-foundry/openai/reference
-
-  # Build the URL
-  baseURL <- sprintf(
-    "%s/openai/deployments/%s/chat/completions?api-version=%s",
-    endpoint,
-    model,
-    version
-  )
-
-  # Build the body
-  system <- ifelse(missing(system), "You are a helpful AI assistant", system)
-  body <- list(
-    messages = list(
-      list(role = "system", content = system),
-      list(role = "user", content = user)
-    ),
-    max_tokens = maxTokens
-  )
-
-  # Send the request
-  req <- request(baseURL) |>
-    req_headers(
-      "Content-Type" = "application/json",
-      "api-key" = Sys.getenv("HMS_AZURE_API")
-    ) |>
-    req_body_json(body) |>
-    req_error(is_error = ~FALSE) |>
-    req_perform()
-
-  if (resp_status(req) != 200) {
-    stop(req)
-  }
-
-  resp <- resp_body_json(req)
-
-  # Write token usage to log file if set
-  if (!missing(log)) {
-    write(
-      sprintf(
-        '"%s",%i,%i',
-        format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-        resp$usage$prompt_tokens,
-        resp$usage$completion_tokens
-      ),
-      log,
-      append = T
-    )
-  }
-
-  return(resp)
-}
-
-#' Call an Azure response LLM
-#'
-#' Note that this function expects an environment variable HMS_AZURE_API
-#' that contains the API key You can set this up using
-#' `Sys.setenv(HMS_AZURE_API = "API token here")`
-#'
-#' @param input User prompt
-#' @param instructions Default = "You are a helpful AI assistant". System prompt
-#' @param log If set, the token usage is kept track of in this CSV file
-#' @param model Default = gpt-4o-1120. LLM model to use
-#' @param endpoint Default = https://azure-ai.hms.edu. Azure endpoint
-#'
-#' @import httr2
-#'
-#' @returns LLM Response object (list).
-#'
-#' If a log file is et a line is added to a CSV file with columns
-#' timestamp, promptTokens and responseTokens (headers not included)
-#'
-#' @export
-#'
 llm_responses <- function(
   input,
   instructions,
@@ -197,9 +27,6 @@ llm_responses <- function(
   model = "gpt-5-mini",
   endpoint = "https://azure-ai.hms.edu"
 ) {
-  # API info https://learn.microsoft.com/en-us/azure/ai-foundry/openai/reference
-
-  # Build the body
   instructions <- ifelse(
     missing(instructions),
     "You are a helpful AI assistant",
@@ -216,7 +43,6 @@ llm_responses <- function(
       input = input,
       instructions = instructions
     )) |>
-    # req_error(is_error = ~FALSE) |>
     req_perform()
 
   if (resp_status(req) != 200) {
@@ -225,7 +51,6 @@ llm_responses <- function(
 
   resp <- resp_body_json(req)
 
-  # Write token usage to log file if set
   if (!missing(log)) {
     write(
       sprintf(
@@ -235,137 +60,196 @@ llm_responses <- function(
         resp$usage$output_tokens
       ),
       log,
-      append = T
+      append = TRUE
     )
   }
 
-  return(resp)
+  resp
 }
 
-#' Get the data from an LLM evaluation
+#' Call the Azure OpenAI chat completions API
 #'
-#' @param conn Connection to a CFME database
-#' @param review_assignment_ids IDs in review_assignment table
-#' @param log (Optional) Save token usage to extra file (will also be in database)
-#' @param maxTries (Default = 3) How many times to try in case the response is
-#' not in a valid format
+#' Note that this function expects an environment variable HMS_AZURE_API
+#' that contains the API key. You can set this up using
+#' `Sys.setenv(HMS_AZURE_API = "API token here")`
 #'
-#' @returns A list with results for each review_assignment_id
-#' - statusCode = final status code (3 = success)
-#' - review_assignment_id: ID from review_assignment table in database
-#' - data: If successful, data frame with response, otherwise NULL
-#' - tries: Number of times tried for valid response
-#' - tokens in / out: token used
+#' @param user User prompt
+#' @param system System prompt. Default = "You are a helpful AI assistant"
+#' @param log If set, token usage is appended to this CSV file
+#' @param model Default = gpt-4o-1120. Azure deployment name
+#' @param maxTokens Default = 500. Maximum tokens to return
+#' @param version Default = 2024-10-21. API version
+#' @param endpoint Default = https://azure-ai.hms.edu. Azure endpoint base URL
+#'
+#' @import httr2
+#' @returns Parsed response list
 #' @export
-#'
-llm_review <- function(
-  conn,
-  review_assignment_ids,
+llm_chat_completion <- function(
+  user,
+  system,
   log,
-  maxTries = 3
+  model = "gpt-4o-1120",
+  maxTokens = 500,
+  version = "2024-10-21",
+  endpoint = "https://azure-ai.hms.edu"
 ) {
-  # Get assignment info
-  assignments <- tbl(conn, "review_assignment") |>
-    filter(id %in% review_assignment_ids, statusCode != 2) |>
-    left_join(
-      tbl(conn, "reviewer") |> select(id, model),
-      by = c("reviewer_id" = "id")
+  system <- ifelse(missing(system), "You are a helpful AI assistant", system)
+
+  baseURL <- sprintf(
+    "%s/openai/deployments/%s/chat/completions?api-version=%s",
+    endpoint,
+    model,
+    version
+  )
+
+  req <- request(baseURL) |>
+    req_headers(
+      "Content-Type" = "application/json",
+      "api-key" = Sys.getenv("HMS_AZURE_API")
     ) |>
-    collect()
+    req_body_json(list(
+      messages = list(
+        list(role = "system", content = system),
+        list(role = "user", content = user)
+      ),
+      max_tokens = maxTokens
+    )) |>
+    req_error(is_error = ~FALSE) |>
+    req_perform()
 
-  check <- setdiff(review_assignment_ids, assignments$id)
-
-  if (length(check) > 0) {
-    stop(paste(
-      "The following review_assignment_ids were not found",
-      paste(check, collapse = ", ")
-    ))
+  if (resp_status(req) != 200) {
+    stop(req)
   }
 
-  # Get all unique prompts needed
-  prompts <- tbl(conn, "prompt") |>
-    filter(id %in% local(unique(assignments$prompt_id))) |>
-    select(id, prompt) |>
-    collect()
+  resp <- resp_body_json(req)
 
-  evals <- assignments |>
-    select(id, evaluation_id, prompt_id, model) |>
-    left_join(
-      dbGetEvals(
-        ids = assignments$evaluation_id,
-        conn = conn,
-        redacted = assignments$redacted,
-        includeQuestions = assignments$include_questions
+  if (!missing(log)) {
+    write(
+      sprintf(
+        '"%s",%i,%i',
+        format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+        resp$usage$prompt_tokens,
+        resp$usage$completion_tokens
       ),
-      by = "evaluation_id"
+      log,
+      append = TRUE
     )
+  }
 
-  # Call LLM for each review
-  info <- lapply(1:nrow(evals), function(j, log = log) {
-    for (i in 1:maxTries) {
-      # Actual LLM call
-      tryCatch(
-        {
-          duration <- Sys.time()
-          if (evals$model[j] %in% c("gpt-4o-1120")) {
-            result <- llm_chat_completion(
-              user = evals$evaluation[j],
-              system = prompts |>
-                filter(id == evals$prompt_id[j]) |>
-                pull(prompt),
-              model = evals$model[j]
-            )
+  resp
+}
 
-            result <- data.frame(
-              content = result$choices[[1]]$message$content,
-              tokens_in = result$usage$prompt_tokens,
-              tokens_out = result$usage$completion_tokens
-            )
-          } else {
-            result <- llm_responses(
-              input = evals$evaluation[j],
-              instructions = prompts |>
-                filter(id == evals$prompt_id[j]) |>
-                pull(prompt),
-              model = evals$model[j]
-            )
+# ─── Batch API helpers ────────────────────────────────────────────────────────
 
-            result <- data.frame(
-              content = result$output[[2]]$content[[1]]$text,
-              tokens_in = result$usage$input_tokens,
-              tokens_out = result$usage$output_tokens
-            )
-          }
-
-          duration <- difftime(Sys.time(), duration, units = "sec") |>
-            as.numeric() |>
-            round(2)
-        },
-        error = function(e) {
-          print(e)
-        }
+#' Build JSONL content for a batch of responses API requests
+#'
+#' @param requests Named list; names become custom_ids, each element is a
+#'   responses API body (instructions, input, text format params, etc.)
+#' @param model Azure deployment name (added to every request body)
+#' @returns Single character string (JSONL, one JSON object per line)
+llm_batch_build_jsonl <- function(requests, model) {
+  lines <- mapply(
+    function(body, id) {
+      body$model <- model
+      jsonlite::toJSON(
+        list(
+          custom_id = id,
+          method = "POST",
+          url = "/v1/responses",
+          body = body
+        ),
+        auto_unbox = TRUE
       )
+    },
+    requests,
+    names(requests),
+    SIMPLIFY = TRUE
+  )
+  paste(lines, collapse = "\n")
+}
 
-      # Convert output CSV string to data frame (and check)
-      output <- llm_csv_response(
-        result$content,
-        reviewID = evals$id[j]
-      )
+#' Upload a JSONL file to the Azure OpenAI Files API
+#'
+#' @param jsonl_content Output of llm_batch_build_jsonl()
+#' @param endpoint Azure endpoint base URL
+#' @param api_key API key. Default = HMS_AZURE_API env var
+#' @returns File ID string
+llm_batch_upload <- function(
+  jsonl_content,
+  endpoint = "https://azure-ai.hms.edu",
+  api_key = Sys.getenv("HMS_AZURE_API")
+) {
+  tmp <- tempfile(fileext = ".jsonl")
+  on.exit(unlink(tmp))
+  writeLines(jsonl_content, tmp, useBytes = TRUE)
 
-      # Add the response metadata
-      output$review_assignment_id = evals$id[j]
-      output$tokens_in = result$tokens_in
-      output$tokens_out = result$tokens_out
-      output$duration = duration = duration
-      output$tries = i
+  resp <- request(paste0(endpoint, "/openai/v1/files")) |>
+    req_headers("api-key" = api_key) |>
+    req_body_multipart(
+      purpose = "batch",
+      file = curl::form_file(tmp, type = "application/json")
+    ) |>
+    req_error(is_error = ~FALSE) |>
+    req_perform()
 
-      if (output$statusCode == 3) {
-        break
-      }
-    }
+  if (!resp_status(resp) %in% c(200, 201)) {
+    stop("File upload failed: ", resp_body_string(resp))
+  }
+  resp_body_json(resp)$id
+}
 
-    output
-  })
+#' Submit a batch job
+#'
+#' @param file_input_id File ID from llm_batch_upload()
+#' @param endpoint Azure endpoint base URL
+#' @param api_key API key. Default = HMS_AZURE_API env var
+#' @returns Batch ID string
+llm_batch_create <- function(
+  file_input_id,
+  endpoint = "https://azure-ai.hms.edu",
+  api_key = Sys.getenv("HMS_AZURE_API")
+) {
+  resp <- request(paste0(endpoint, "/openai/v1/batches")) |>
+    req_headers("api-key" = api_key, "Content-Type" = "application/json") |>
+    req_body_json(list(
+      input_file_id = file_input_id,
+      endpoint = "/responses",
+      completion_window = "24h"
+    )) |>
+    req_error(is_error = ~FALSE) |>
+    req_perform()
 
-  return(info)
+  if (resp_status(resp) != 200) {
+    stop("Batch creation failed: ", resp_body_string(resp))
+  }
+  resp_body_json(resp)$id
+}
+
+#' Download and parse a batch output file
+#'
+#' @param file_output_id output_file_id from the completed batch status object
+#' @param endpoint Azure endpoint base URL
+#' @param api_key API key. Default = HMS_AZURE_API env var
+#' @returns Named list keyed by custom_id; each element is the parsed response object
+llm_batch_results <- function(
+  file_output_id,
+  endpoint = "https://azure-ai.hms.edu",
+  api_key = Sys.getenv("HMS_AZURE_API")
+) {
+  resp <- request(
+    paste0(endpoint, "/openai/v1/files/", file_output_id, "/content")
+  ) |>
+    req_headers("api-key" = api_key) |>
+    req_error(is_error = ~FALSE) |>
+    req_perform()
+
+  if (resp_status(resp) != 200) {
+    stop("Failed to fetch results: ", resp_body_string(resp))
+  }
+
+  lines <- strsplit(resp_body_string(resp), "\n")[[1]]
+  lines <- lines[nzchar(trimws(lines))]
+  rows <- lapply(lines, jsonlite::fromJSON, simplifyVector = FALSE)
+
+  setNames(rows, vapply(rows, "[[", character(1), "custom_id"))
 }

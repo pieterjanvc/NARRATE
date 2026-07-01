@@ -47,7 +47,7 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-  dbInfo <- "../local/cfme.db"
+  dbInfo <- "../local/narrate.db"
   conn <- dbGetConn(dbInfo, session = session)
   x <- mod_setup_server("dev", conn)
   observe({

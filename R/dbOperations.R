@@ -1,7 +1,7 @@
 #' Parse data from a combined format and insert it into the database
 #'
 #' @param combined_data Dataframe of the original data
-#' @param dbPath Path to a (new) CFME database
+#' @param dbPath Path to a (new) NARRATE database
 #' @param redactedOnly (Default = FALSE) If TRUE, only redacted evlaluations are
 #' put into the database the version with identifiers is omitted
 #'
@@ -34,10 +34,10 @@ dbAddEvaluations <- function(combined_data, dbPath, redactedOnly = F) {
   data <- combined_data
 
   # Create / access the database
-  schema <- system.file("extdata", "cfme.sql", package = "CFME")
+  schema <- system.file("extdata", "narrate.sql", package = "NARRATE")
 
   if (schema == "") {
-    schema <- "inst/cfme.sql"
+    schema <- "inst/narrate.sql"
   }
 
   result <- dbSetup(dbPath, schema, validateSchema = T)
@@ -110,7 +110,8 @@ dbAddEvaluations <- function(combined_data, dbPath, redactedOnly = F) {
       rotation_date,
       first_nbme_score,
     ) |>
-    distinct()
+    distinct() |>
+    mutate(rotation_date = format(as.Date(rotation_date, tryFormats = c("%Y-%m-%d", "%m/%d/%Y")), "%Y-%m-%d"))
 
   check <- rotation |> group_by(student_id, clerkship_id) |> filter(n() > 1)
   if (nrow(check) > 0) {
@@ -260,7 +261,7 @@ dbAddEvaluations <- function(combined_data, dbPath, redactedOnly = F) {
 #' Get the evaluation text from the database
 #'
 #' @param ids A vector of evaluation IDs to retrieve text for
-#' @param conn CFME database connection
+#' @param conn NARRATE database connection
 #' @param redacted (Default = TRUE) Show redacted text.
 #' Can also be a vector of length ids
 #' @param includeQuestions (Default = TRUE) Add the questions to the text.
@@ -350,7 +351,7 @@ dbGetEvals <- function(
 #' Add a new prompt to the database
 #'
 #' @param prompt Single string of system prompt text
-#' @param conn CFME database connection
+#' @param conn NARRATE database connection
 #' @param note (Optional) Note about this prompt
 #' @param commit (Default = TRUE) Commit the transaction
 #' @param showWarning (Default = TRUE) Show warning if prompt already exists
@@ -388,11 +389,11 @@ dbAddPrompt <- function(
     )
 
     if (!missing(note)) {
-      toInsert$note = note
+      toInsert$note <- note
     }
 
     if (!is.null(task)) {
-      toInsert$task = task
+      toInsert$task <- task
     }
 
     promptID <- tbl_insert(toInsert, conn, "prompt", commit = commit) |>
@@ -406,8 +407,8 @@ dbAddPrompt <- function(
 
 #' Insert or update into review score table
 #'
-#' @param conn CFME database connection
-#' @param statusCode Set the review status (0 = new,1 = in progress,2 = complete, -1 = flagged)
+#' @param conn NARRATE database connection
+#' @param statusCode Set the review_assignment status; run status_codes(conn, "review_assignment") for code details
 #' @param overallScores Data frame matching review_assignment table which
 #' contains the overall scores
 #' @param compScores Data frame matching competency_scores table (new IDs will be generated)
@@ -492,121 +493,29 @@ dbReviewUpdate <- function(
   tbl_delete(toDelete, conn, "competency_score", commit = F, returnData = F)
 
   # Add new results
-  compScores <- tbl_insert(compScores, conn, "competency_score", commit = F)
+  newScores <- tbl_insert(compScores, conn, "competency_score", commit = F)
   compText <- compText |>
     left_join(
-      compScores |>
+      newScores |>
         select(competency_score_id = id, review_assignment_id, competency_id),
       by = c("review_assignment_id", "competency_id")
     ) |>
     select(competency_score_id, text_match)
-  compText <- tbl_insert(compText, conn, "competency_text", commit = commit)
+  tbl_insert(compText, conn, "competency_text", commit = commit)
+
+  # Return all scores for this review, not just the newly inserted row
+  compScores <- tbl(conn, "competency_score") |>
+    filter(review_assignment_id %in% local(overallScores$id)) |>
+    collect()
+  compText <- tbl(conn, "competency_text") |>
+    filter(competency_score_id %in% local(compScores$id)) |>
+    collect()
 
   return(list(
     overallScores = overallScores,
     compScores = compScores,
     compText = compText
   ))
-}
-
-#' Add an AI response from llm_review() to the database
-#'
-#' @param conn CFME database connection
-#' @param llmReview Output of the llm_review() function
-#' @param commit (Default = TRUE) Commit the transaction
-#'
-#' @import dplyr
-#' @import sqlife
-#'
-#' @returns A data frame with the following columns:
-#' - evaluation_id,
-#' - review_assignment_id,
-#' - review_score_id: the ID for the each detected competency review scores
-#' @export
-#'
-dbAIreview <- function(conn, llmReview, commit = T) {
-  # Check which ones were a success
-  success <- sapply(llmReview, "[[", "statusCode") == 3
-
-  # Combine data to be inserted into database
-  overallScores <- do.call(
-    rbind,
-    lapply(llmReview[success], function(x) {
-      x$data$overallScores |>
-        mutate(
-          tokens_in = x$tokens_in,
-          tokens_out = x$tokens_out,
-          duration = x$duration,
-          note = ifelse(x$tries == 1, NA, paste(x$tries, "tries"))
-        )
-    })
-  ) |>
-    rename(
-      utility = util,
-      sentiment = sent
-    )
-
-  compScores <- do.call(
-    rbind,
-    lapply(llmReview[success], "[[", c("data", "compScores"))
-  ) |>
-    rename(
-      review_assignment_id = id,
-      competency_id = cID,
-      specificity = specificity
-    )
-
-  compText <- do.call(
-    rbind,
-    lapply(llmReview[success], "[[", c("data", "compText"))
-  ) |>
-    rename(
-      review_assignment_id = id,
-      competency_id = cID,
-    )
-
-  return(dbReviewUpdate(
-    conn = conn,
-    statusCode = 2,
-    overallScores = overallScores,
-    compScores = compScores,
-    compText = compText,
-    removeNotListed = T,
-    commit = commit
-  ))
-
-  # # Delete existing results
-  # #  competency_text has a cascading delete so will clean up automatically
-  # existing <- tbl(conn, "competency_score") |>
-  #   filter(
-  #     review_assignment_id %in% local(overallScores$id)
-  #   ) |>
-  #   select(id, review_assignment_id, competency_id) |>
-  #   collect()
-  #
-  # tbl_delete(
-  #   data.frame(id = existing$id),
-  #   conn,
-  #   "competency_score",
-  #   commit = F,
-  #   returnData = F
-  # )
-  #
-  # # Add new results
-  # compScores <- tbl_insert(compScores, conn, "competency_score", commit = F)
-  # compText <- compText |>
-  #   left_join(
-  #     compScores |>
-  #       select(competency_score_id = id, review_assignment_id, competency_id),
-  #     by = c("review_assignment_id", "competency_id")
-  #   ) |>
-  #   select(competency_score_id, text_match)
-  # compText <- tbl_insert(compText, conn, "competency_text", commit = F)
-  #
-  # # Update existing scores (and commit)
-  # result <- tbl_update(overallScores, conn, "review_assignment", commit = T)
-  #
-  # return(result)
 }
 
 #' Internal function to insert or update into reviewer table
@@ -630,7 +539,7 @@ dbReviewer <- function(conn, data, commit = T) {
 
 #' Insert or Update human reviewer info into the database
 #'
-#' @param conn CFME database connection
+#' @param conn NARRATE database connection
 #' @param id (Optional) Reviewer id. If provided this means updating existing.
 #' If not, a new reviewer will be created
 #' @param username Username. Required if new reviewer
@@ -698,7 +607,7 @@ dbReviewerHuman <- function(
 
 #' Insert or Update AI reviewer info into the database
 #'
-#' @param conn CFME database connection
+#' @param conn NARRATE database connection
 #' @param id (Optional) Reviewer id. If provided this means updating existing.
 #' If not, a new reviewer will be created
 #' @param model AI model name. Required if new reviewer
@@ -760,12 +669,11 @@ dbReviewerAI <- function(
 
 #' Insert or update a review assignment
 #'
-#' @param conn CFME database connection
+#' @param conn NARRATE database connection
 #' @param id (Optional) Review assignment ID. If not set, new entry is created
 #' @param reviewer_id (Required if id not set)
 #' @param evaluation_id (Required if id not set)
-#' @param prompt_extract_id (Required if id not set)
-#' @param prompt_score_id (Required if id not set)
+#' @param rubric_id (Optional) Rubric ID. Defaults to the most recently created rubric.
 #' @param include_questions (Optional value)
 #' @param redacted (Optional value)
 #' @param duration (Optional value)
@@ -783,9 +691,7 @@ dbReviewAssignment <- function(
   id,
   reviewer_id,
   evaluation_id,
-  prompt_id,
-  prompt_extract_id,
-  prompt_score_id,
+  rubric_id,
   include_questions,
   redacted,
   duration,
@@ -800,9 +706,9 @@ dbReviewAssignment <- function(
 
   if (missing(id)) {
     # New
-    data$statusCode = 0
+    data$statusCode <- 0
     if (missing(redacted)) {
-      data$redacted = T
+      data$redacted <- T
     } else {
       redactedOnly <- tbl(conn, "answer") |>
         slice_sample(n = 5) |>
@@ -815,53 +721,14 @@ dbReviewAssignment <- function(
       }
     }
 
-    human <- tbl(conn, "reviewer") |>
-      filter(id == local(reviewer_id)) |>
-      pull(human) ==
-      1
-
-    if (human) {
-      prompt_ids <- prompt_id
-    } else {
-      prompt_ids <- c(
-        ifelse(
-          missing(prompt_extract_id),
-          NA,
-          prompt_extract_id
-        ),
-        ifelse(missing(prompt_score_id), NA, prompt_score_id)
-      )
+    if (missing(rubric_id)) {
+      data$rubric_id <- tbl(conn, "rubric") |>
+        summarise(id = max(id, na.rm = TRUE)) |>
+        pull(id)
+      if (length(data$rubric_id) == 0 || is.na(data$rubric_id)) {
+        stop("No rubric found. Run rubric_process() first.")
+      }
     }
-
-    ids <- mapply(
-      function(prompt_id, task) {
-        # Check prompt
-        if (is.na(prompt_id)) {
-          prompt_id <- tbl(conn, "prompt") |>
-            filter(task == local(task)) |>
-            filter(id == max(id)) |>
-            pull(id)
-          if (length(prompt_id) == 0) {
-            stop("You need to add at least one prompt for ", task)
-          }
-        } else {
-          prompt_id <- tbl(conn, "prompt") |>
-            filter(id == local(prompt_id), task == local(task)) |>
-            pull(id)
-
-          if (length(prompt_id) == 0) {
-            stop("The provided prompt_id does not exist for ", task)
-          }
-        }
-
-        prompt_id
-      },
-      prompt_id = prompt_ids,
-      task = c("comp_extract", "comp_score")
-    )
-
-    data$prompt_extract_id = ids[1]
-    data$prompt_score_id = ids[2]
 
     result <- tbl_insert(data, conn, "review_assignment", commit = commit)
   } else {
@@ -874,10 +741,11 @@ dbReviewAssignment <- function(
 
 #' Insert or update a list of extracted competencies
 #'
-#' @param conn CFME database connection
+#' @param conn NARRATE database connection
 #' @param review_assignment_id Review assignment ID
 #' @param comp_extraction List as generated by llm_comp_extract() (i.e. result$data),
-#' where each element has a cID (integer) and text (character vector)
+#' where each element has a cIndex (integer order position within the rubric) and
+#' text (character vector)
 #' @param return_tables (Default = F) If TRUE, returns competency_score and
 #' competency_text as dataframes in the result list
 #' @param commit (Default = T)
@@ -895,20 +763,32 @@ dbCompExtraction <- function(
   return_tables = F,
   commit = T
 ) {
-  # Get existing competency_score entries for this review_assignment_id
   ra_id <- review_assignment_id
+
+  # Resolve cIndex (order position) → competency_id via rubric_competency
+  rubric_id <- tbl(conn, "review_assignment") |>
+    filter(id == local(ra_id)) |>
+    pull(rubric_id)
+
+  order_map <- tbl(conn, "rubric_competency") |>
+    filter(rubric_id == local(rubric_id)) |>
+    select(comp_order = order, competency_id) |>
+    collect()
+
+  new_indexes <- sapply(comp_extraction, "[[", "cIndex")
+  new_comp_ids <- order_map$competency_id[match(
+    new_indexes,
+    order_map$comp_order
+  )]
+
+  # Get existing competency_score entries for this review_assignment_id
   existing_scores <- tbl(conn, "competency_score") |>
     filter(review_assignment_id == local(ra_id)) |>
     collect()
 
-  # Extract cIDs from comp_extraction
-  new_cIDs <- sapply(comp_extraction, "[[", "cID")
-
   # --- competency_score: update existing (reset specificity) or insert new
-  existing_cIDs <- existing_scores$competency_id
-
   to_update <- existing_scores |>
-    filter(competency_id %in% new_cIDs)
+    filter(competency_id %in% new_comp_ids)
 
   if (nrow(to_update) > 0) {
     tbl_update(
@@ -919,13 +799,15 @@ dbCompExtraction <- function(
     )
   }
 
-  to_insert_cIDs <- new_cIDs[!new_cIDs %in% existing_cIDs]
+  to_insert_ids <- new_comp_ids[
+    !new_comp_ids %in% existing_scores$competency_id
+  ]
 
-  if (length(to_insert_cIDs) > 0) {
+  if (length(to_insert_ids) > 0) {
     tbl_insert(
       data.frame(
         review_assignment_id = review_assignment_id,
-        competency_id = unname(to_insert_cIDs)
+        competency_id = unname(to_insert_ids)
       ),
       conn,
       "competency_score",
@@ -938,15 +820,15 @@ dbCompExtraction <- function(
     filter(review_assignment_id == local(ra_id)) |>
     collect()
 
-  # --- competency_text: delete existing and insert new for each cID
+  # --- competency_text: delete existing and insert new for each extracted item
   all_text_new <- list()
 
   for (item in comp_extraction) {
-    cid <- item$cID
+    comp_id <- order_map$competency_id[order_map$comp_order == item$cIndex]
     texts <- item$text
 
     score_id <- all_scores |>
-      filter(competency_id == cid) |>
+      filter(competency_id == local(comp_id)) |>
       pull(id)
 
     existing_text <- tbl(conn, "competency_text") |>
@@ -980,9 +862,70 @@ dbCompExtraction <- function(
 
   if (return_tables) {
     result$competency_score <- all_scores |>
-      filter(competency_id %in% new_cIDs)
+      filter(competency_id %in% new_comp_ids)
     result$competency_text <- bind_rows(all_text_new)
   }
 
   return(result)
+}
+
+#' Add core faculty start dates and update core faculty status in evaluations
+#'
+#' @param file Path to a CSV file with columns original_evaluator_id and core_faculty_start
+#' @param conn A database connection (schema inst/narrate.sql)
+#'
+#' @import dplyr
+#' @import RSQLite
+#' @importFrom sqlife tbl_update
+#' @importFrom utils read.csv
+#'
+#' @returns TRUE invisibly on success
+#' @export
+#'
+dbAddCoreFaculty <- function(file, conn) {
+  csv <- read.csv(file, stringsAsFactors = FALSE)
+
+  # --- Step 1: update core_faculty_start in evaluator
+  evaluators <- tbl(conn, "evaluator") |>
+    filter(original_evaluator_id %in% local(csv$original_evaluator_id)) |>
+    collect()
+
+  to_update <- evaluators |>
+    inner_join(
+      csv |> select(original_evaluator_id, core_faculty_start),
+      by = "original_evaluator_id"
+    ) |>
+    mutate(core_faculty_start = core_faculty_start.y) |>
+    select(id, core_faculty_start)
+
+  if (nrow(to_update) > 0) {
+    tbl_update(to_update, conn, "evaluator", commit = FALSE)
+  }
+
+  # --- Step 2: update core_faculty in evaluation
+  # Re-read evaluators so we use the freshly updated core_faculty_start values
+  all_evaluators <- tbl(conn, "evaluator") |>
+    filter(!is.na(core_faculty_start)) |>
+    collect()
+
+  evaluations <- tbl(conn, "evaluation") |>
+    inner_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
+    collect() |>
+    left_join(
+      all_evaluators |> select(id, core_faculty_start),
+      by = c("evaluator_id" = "id")
+    ) |>
+    mutate(
+      core_faculty = as.integer(
+        !is.na(core_faculty_start) & rotation_date >= core_faculty_start
+      )
+    ) |>
+    select(id, core_faculty)
+
+  if (nrow(evaluations) > 0) {
+    tbl_update(evaluations, conn, "evaluation", commit = FALSE)
+  }
+
+  dbCommit(conn)
+  invisible(TRUE)
 }

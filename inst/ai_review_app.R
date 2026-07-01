@@ -4,12 +4,13 @@ library(dplyr)
 library(DT)
 library(sqlife)
 
-dbInfo <- "../local/batch_test.db"
+# dbInfo <- "../local/clean_up.db"
+dbInfo <- "/home/pj/Downloads/batch_test.db"
 
 # This is the db used during deployment, see deployShinyApp()
 if (!file.exists(dbInfo)) {
-  dbInfo <- "../local/batch_test.db"
-  library(CFME)
+  dbInfo <- "../narrate.db"
+  library(NARRATE)
 } else {
   devtools::load_all()
 }
@@ -111,19 +112,21 @@ server <- function(input, output, session) {
   conn <- dbGetConn(dbInfo, session = session)
 
   # Weights for quality score: coverage 35%, avg specificity 45%, utility 20%
-  w_c <- 0.35; w_s <- 0.45; w_u <- 0.20
+  w_c <- 0.35
+  w_s <- 0.45
+  w_u <- 0.20
 
   comp_summary_all <- tbl(conn, "competency_score") |>
     filter(!is.na(specificity)) |>
     group_by(review_assignment_id) |>
     summarise(
-      n_competencies  = n(),
+      n_competencies = n(),
       avg_specificity = mean(specificity, na.rm = TRUE),
       .groups = "drop"
     )
 
   # Populate the dropdown with AI-completed review assignments
-  ai_reviews <- tbl(conn, "review_assignment") |>
+  ai_reviews <<- tbl(conn, "review_assignment") |>
     filter(statusCode %in% ai_complete_codes) |>
     inner_join(
       tbl(conn, "reviewer") |>
@@ -133,37 +136,59 @@ server <- function(input, output, session) {
     ) |>
     left_join(comp_summary_all, by = c("id" = "review_assignment_id")) |>
     left_join(
-      tbl(conn, "evaluation") |> select(evaluation_id = id, evaluator_id, summary_flg),
+      tbl(conn, "evaluation") |>
+        select(evaluation_id = id, evaluator_id, summary_flg),
       by = "evaluation_id"
     ) |>
     left_join(
       tbl(conn, "evaluator") |> select(evaluator_id = id, evaluator),
       by = "evaluator_id"
     ) |>
-    select(id, evaluation_id, evaluator, summary_flg, utility, n_competencies, avg_specificity) |>
+    select(
+      id,
+      evaluation_id,
+      evaluator,
+      summary_flg,
+      utility,
+      n_competencies,
+      avg_specificity
+    ) |>
     collect() |>
     mutate(
-      n_competencies   = ifelse(is.na(n_competencies), 0L, n_competencies),
-      avg_specificity  = ifelse(is.na(avg_specificity), NA_real_, avg_specificity),
-      coverage_norm    = n_competencies / 8,
-      specificity_norm = ifelse(n_competencies > 0, (avg_specificity - 1) / 3, 0),
-      utility_norm     = ifelse(!is.na(utility), (utility - 1) / 2, 0),
-      total_score      = round(
-        (w_c * coverage_norm + w_s * specificity_norm + w_u * utility_norm) * 100, 1
+      n_competencies = ifelse(is.na(n_competencies), 0L, n_competencies),
+      avg_specificity = ifelse(
+        is.na(avg_specificity),
+        NA_real_,
+        avg_specificity
+      ),
+      coverage_norm = n_competencies / 8,
+      specificity_norm = ifelse(
+        n_competencies > 0,
+        (avg_specificity - 1) / 3,
+        0
+      ),
+      utility_norm = ifelse(!is.na(utility), (utility - 1) / 2, 0),
+      total_score = round(
+        (w_c * coverage_norm + w_s * specificity_norm + w_u * utility_norm) *
+          100,
+        1
       ),
       label = sprintf(
-        "[%.1f] %s%s",
+        "[%.1f] %s%s - ID %i",
         total_score,
         evaluator,
-        ifelse(summary_flg == 1L, " (Summary)", "")
+        ifelse(summary_flg == 1L, " (Summary)", ""),
+        evaluation_id
       )
     ) |>
     arrange(desc(total_score))
 
+  random_sel <- sample(1:nrow(ai_reviews), 100) |> sort()
+
   updateSelectInput(
     session,
     "reviewID",
-    choices = setNames(ai_reviews$id, ai_reviews$label)
+    choices = setNames(ai_reviews$id[random_sel], ai_reviews$label[random_sel])
   )
 
   # Reactive: fetch all data for the selected review
@@ -258,12 +283,12 @@ server <- function(input, output, session) {
 
   # Right bottom card: overall scores
   output$overallScores <- renderUI({
-    a   <- selected_review()$assignment
+    a <- selected_review()$assignment
     rid <- as.integer(input$reviewID)
 
-    utility_val   <- a$utility
+    utility_val <- a$utility
     sentiment_val <- a$sentiment
-    score_row     <- ai_reviews[ai_reviews$id == rid, ]
+    score_row <- ai_reviews[ai_reviews$id == rid, ]
 
     utility_txt <- if (
       !is.na(utility_val) && utility_val >= 1L && utility_val <= 3L
@@ -303,7 +328,11 @@ server <- function(input, output, session) {
             tags$td("Avg Specificity"),
             tags$td(sprintf(
               "%.2f / 4  \u2192  %.0f%%",
-              ifelse(is.na(score_row$avg_specificity), 0, score_row$avg_specificity),
+              ifelse(
+                is.na(score_row$avg_specificity),
+                0,
+                score_row$avg_specificity
+              ),
               score_row$specificity_norm * 100
             ))
           ),

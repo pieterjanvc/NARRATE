@@ -126,7 +126,7 @@ getFunArgs <- function(exclude) {
 #' Delop Shiny App
 #'
 #' @param db Database to use
-#' @param gitHubBranch CFME branch
+#' @param gitHubBranch NARRATE branch
 #' @param dev Deploy to dev app
 #'
 #' @import shiny bslib
@@ -138,18 +138,27 @@ getFunArgs <- function(exclude) {
 #' @export
 #'
 deployShinyApp <- function(db, gitHubBranch, dev = F) {
-  root <- ifelse(dev, "deploy/CFME-dev", "deploy/CFME")
+  root <- ifelse(dev, "deploy/NARRATE-dev", "deploy/NARRATE")
   # Copy files
   dir.create(root, showWarnings = F)
   file.copy("inst/review_app.R", file.path(root, "app.R"), overwrite = T)
   file.copy("renv.lock", file.path(root, "renv.lock"), overwrite = T)
-  file.copy(db, file.path(root, "cfme.db"), overwrite = T)
-  devtools::install_github(paste0("pieterjanvc/CFME@", gitHubBranch))
-  # Add CFME to lock file
+  file.copy(db, file.path(root, "narrate.db"), overwrite = T)
+  pak::pak(paste0("pieterjanvc/NARRATE@", gitHubBranch))
+  # Add NARRATE to lock file
+  lockfile <- file.path(root, "renv.lock")
   renv::record(
-    paste0("pieterjanvc/CFME@", gitHubBranch),
-    lockfile = file.path(root, "renv.lock")
+    paste0("pieterjanvc/NARRATE@", gitHubBranch),
+    lockfile = lockfile
   )
+  # renv::record() omits Imports, so packrat on Connect can't determine install
+  # order and fails. Patch the entry from the installed package's DESCRIPTION.
+  desc <- packageDescription("NARRATE")
+  imports <- trimws(strsplit(gsub("\n\\s*", " ", desc$Imports), ",")[[1]])
+  imports <- sub("\\s*\\(.*?\\)\\s*$", "", imports)
+  lock <- jsonlite::read_json(lockfile)
+  lock$Packages$NARRATE$Imports <- as.list(imports)
+  jsonlite::write_json(lock, lockfile, pretty = 2, auto_unbox = TRUE)
 }
 
 #' Backup and replace the DB using pins
@@ -157,8 +166,8 @@ deployShinyApp <- function(db, gitHubBranch, dev = F) {
 #' @param password Admin password, set `adminPass` as an environment variable
 #' @param dbPath Path to the DB
 #' @param action Any of the following: "import", "export". Can be both as vector
-#' @param exportPin (Default = "cfme_db_export") Pin name for the export / backup DB
-#' @param importPin (Default = "cfme_db_import") Pin name for the import DB
+#' @param exportPin (Default = "narrate_db_export") Pin name for the export / backup DB
+#' @param importPin (Default = "narrate_db_import") Pin name for the import DB
 #' @param nBackups (Default = 3) N most recent exports to keep
 #'
 #' @import pins
@@ -170,8 +179,8 @@ deployShinyApp <- function(db, gitHubBranch, dev = F) {
 pinDB <- function(
   dbPath,
   action,
-  exportPin = "cfme_db_export",
-  importPin = "cfme_db_import",
+  exportPin = "narrate_db_export",
+  importPin = "narrate_db_import",
   nBackups = 3
 ) {
   if (!dbIsSQLite(dbPath)) {
@@ -330,7 +339,7 @@ batch_status_notify <- function(
               break
             }
 
-            batch_info <- CFME::llm_batch_status(batch_id, conn)
+            batch_info <- llm_batch_status(batch_id, conn)
 
             if (batch_info$statusCode == 3) {
               httr2::request(auth$url) |>
@@ -373,4 +382,26 @@ batch_status_notify <- function(
   )
 
   invisible(bg)
+}
+
+#' Look up status codes for a database table or function
+#'
+#' @param conn NARRATE database connection
+#' @param table Name of a database table or function to filter by (optional)
+#'
+#' @import dplyr
+#' @returns Data frame of matching status codes
+#' @export
+status_codes <- function(conn, table = NULL) {
+  q <- tbl(conn, "status_codes")
+  if (!is.null(table)) {
+    tbl_filter <- table # avoid name collision with the "table" column in dplyr mask
+    q <- filter(
+      q,
+      .data[["table"]] == tbl_filter | .data[["function"]] == tbl_filter
+    )
+  }
+  collect(q) |>
+    select(-id) |>
+    arrange(.data[["table"]], .data[["function"]], code)
 }
