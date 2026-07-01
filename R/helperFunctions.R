@@ -137,11 +137,16 @@ getFunArgs <- function(exclude) {
 #'
 #' @export
 #'
-deployShinyApp <- function(db, gitHubBranch, dev = F) {
+deployShinyApp <- function(
+  db,
+  gitHubBranch,
+  dev = F,
+  app_file = "inst/review_app.R"
+) {
   root <- ifelse(dev, "deploy/NARRATE-dev", "deploy/NARRATE")
   # Copy files
   dir.create(root, showWarnings = F)
-  file.copy("inst/review_app.R", file.path(root, "app.R"), overwrite = T)
+  file.copy(app_file, file.path(root, "app.R"), overwrite = T)
   file.copy("renv.lock", file.path(root, "renv.lock"), overwrite = T)
   file.copy(db, file.path(root, "narrate.db"), overwrite = T)
   pak::pak(paste0("pieterjanvc/NARRATE@", gitHubBranch))
