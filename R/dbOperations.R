@@ -233,8 +233,18 @@ dbAddEvaluations <- function(combined_data, dbPath, redactedOnly = F) {
     )
   }
 
+  # rotation_date is reformatted to "%Y-%m-%d" when inserted into the
+  # rotation table, so normalize it the same way before comparing
+  combined_data_check <- combined_data |>
+    mutate(
+      rotation_date = format(
+        as.Date(rotation_date, tryFormats = c("%Y-%m-%d", "%m/%d/%Y")),
+        "%Y-%m-%d"
+      )
+    )
+
   #Check if data matches
-  if (!all(check == combined_data, na.rm = T)) {
+  if (!all(check == combined_data_check, na.rm = T)) {
     stop(
       "Something went wrong and the processed data does not match the original"
     )
