@@ -42,7 +42,7 @@ tbl(conn, "evaluator") |>
 The bar plot below shows an overview of how often competencies were detected across all reviews, stratified by before and after the start of the core faculty program. Counts are expressed as a proportion of the total number of reviews in each group, since the before and after groups differ in size.
 
 ```{r}
-#| fig-width: 10
+#| fig-width: 8
 #| fig-height: 7
 period_totals <- tbl(conn, "review_assignment") |>
   filter(statusCode == 5) |>
@@ -57,10 +57,14 @@ plot_data <- tbl(conn, "competency_score") |>
   filter(statusCode == 5, !is.na(specificity)) |>
   left_join(tbl(conn, "evaluation"), by = c("evaluation_id" = "id")) |>
   left_join(tbl(conn, "competency") |> select(competency_id = id, name), by = "competency_id") |>
-  count(name, specificity, core_faculty) |>
-  collect() |>
+  count(competency_id, name, specificity, core_faculty) |>
+  collect()
+
+comp_order <- plot_data |> select(competency_id, name) |> distinct() |> pull(name) |> stringr::str_wrap(20)
+
+plot_data <- plot_data |> 
   mutate(
-    name = factor(name),
+    name = factor(stringr::str_wrap(name, 20), levels = rev(comp_order)),
     period = ifelse(core_faculty == 1, "After", "Before"),
     specificity = factor(
       specificity,
@@ -72,16 +76,17 @@ plot_data <- tbl(conn, "competency_score") |>
   mutate(
     period = factor(period, levels = c("Before", "After")),
     pct = n / total,
-    x_pos = as.numeric(name) + ifelse(period == "Before", -0.2, 0.2)
+    x_pos = as.numeric(name) + ifelse(period == "Before", 0.2, -0.2)
   )
 
 ggplot(plot_data, aes(x = x_pos, y = pct, fill = specificity)) +
   geom_col(width = 0.35) +
   scale_x_continuous(breaks = seq_along(levels(plot_data$name)), labels = levels(plot_data$name)) +
   scale_y_continuous(labels = scales::percent) +
+  coord_flip() +
   labs(
     x = "Competency", y = "Share of Reviews", fill = "Specificity",
-    caption = "For each competency: left bar = before program start, right bar = after"
+    caption = "For each competency: top bar = before program start, bottom bar = after"
   ) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
