@@ -90,8 +90,8 @@ supporting text evidence as provided by the evaluator.
 
 ### Levels
 
-- 1: Competency is mentioned only with general or broad qualifier with example
-  to support it
+- 1: Competency is mentioned only with general or broad qualifier without
+  example to support it
 - 2: Detail about competency is mentioned without example to support it
 - 3: At least one specific example supports the competency
 - 4: At least one very detailed example of a specific encounter providing
