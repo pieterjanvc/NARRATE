@@ -1,7 +1,8 @@
 # TASK
 
-Analyze the clinical clerkship evaluation of a medical student below and
-identify which of the 8 competencies are explicitly addressed.
+Analyze the quality of a clinical clerkship evaluation of a medical student
+below and identify which of the listed competencies are explicitly addressed by
+the evaluator and how how good the quality of each description is.
 
 # RULES
 
@@ -41,12 +42,10 @@ a single one:
 
 # OUTPUT
 
-Return valid JSON only — no markdown, no explanation. Use this exact structure:
+Return valid JSON that can be parsed directly, so no markdown, no explanation.
+Use this exact structure:
 
 {"extractions": [{"cIndex": 1, "text": ["verbatim span 1", "verbatim span 2"]}]}
 
 Only include competencies that were found. An empty extractions array is valid.
-
-Before returning, scan your output: if any string appears under more than one
-cIndex, remove it from all but the single most specific match. Remove competencies
-as needed if they no longer have supporting text evidence.
+cIndex needs to be unique (i.e. no multiple entries for the same competency)
