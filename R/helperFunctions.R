@@ -1,3 +1,137 @@
+#' Initialize a new NARRATE database, load evaluation data, and seed reviews
+#'
+#' Creates a new NARRATE SQLite database from the package schema, imports
+#' evaluation data from an .xlsx file, registers the default AI and human
+#' reviewers, links the rubric prompts, and assigns the same random sample
+#' of evaluations to every reviewer so review can start immediately.
+#'
+#' @param path Path to the (new) NARRATE SQLite database
+#' @param dataset Path to the .xlsx file with the combined evaluation data
+#' @param default_ai (Default = "gpt-5.1") Model name used to create the
+#' default AI reviewer
+#' @param default_reviewers (Default = c("TK", "AW", "KM", "test")) Usernames
+#' used to create the default human reviewers
+#' @param n_assigned (Default = 3) Number of evaluations, per
+#' summary_flg / complete group, randomly assigned to every reviewer
+#' @param seed (Default = 1) Random seed used when sampling evaluations
+#' @param redactedOnly (Default = TRUE) If TRUE, only redacted evaluations
+#' are inserted into the database; the version with identifiers is omitted
+#' @param force_overwrite (Default = FALSE) If a database already exists at
+#' `path`, stop unless this is TRUE. If TRUE, the existing database (and any
+#' `-wal` / `-shm` / `-journal` sidecar files) is moved to the system temp
+#' folder with a timestamp appended before a new one is created
+#'
+#' @import dplyr
+#' @importFrom readxl read_xlsx
+#'
+#' @returns A list with the AI and human reviewer records, the rubric id,
+#' the sampled evaluation ids and the created review assignments. The
+#' database connection opened internally is closed before returning; call
+#' `dbGetConn(path)` to continue working with the database
+#' @export
+#'
+narrate_init <- function(
+  path,
+  dataset,
+  default_ai = "gpt-5.1",
+  default_reviewers = c("TK", "AW", "KM", "test"),
+  n_assigned = 3,
+  seed = 1,
+  redactedOnly = TRUE,
+  force_overwrite = FALSE
+) {
+  if (pkgload::is_dev_package("NARRATE")) {
+    schema <- "inst/narrate.sql"
+    print("USED LOCAL!")
+  } else {
+    schema <- system.file("narrate.sql", package = "NARRATE")
+  }
+
+  if (file.exists(path)) {
+    if (!force_overwrite) {
+      stop(
+        "A database already exists at ",
+        path,
+        ". Set force_overwrite = TRUE to replace it."
+      )
+    }
+
+    timestamp <- as.integer(Sys.time())
+    for (suffix in c("", "-wal", "-shm", "-journal")) {
+      sidecar <- paste0(path, suffix)
+      if (file.exists(sidecar)) {
+        backup_path <- file.path(
+          tempdir(),
+          paste0(basename(sidecar), "_", timestamp)
+        )
+        file.copy(sidecar, backup_path)
+        file.remove(sidecar)
+        message(
+          "Existing database file ",
+          sidecar,
+          " moved to ",
+          backup_path,
+          ". This is a system temp folder so the file may (but is not ",
+          "guaranteed to) be removed automatically on next system startup."
+        )
+      }
+    }
+  }
+
+  dbSetup(path, schema)
+
+  # Add all evaluation data (manages its own connection internally)
+  combined_data <- readxl::read_xlsx(dataset)
+  dbAddEvaluations(combined_data, path, redactedOnly = redactedOnly)
+
+  conn <- dbGetConn(path)
+
+  # Add default AI and human reviewers
+  ai_reviewer <- dbReviewerAI(conn, model = default_ai)
+  human_reviewers <- lapply(default_reviewers, function(username) {
+    dbReviewerHuman(conn, username = username)
+  }) |>
+    bind_rows()
+
+  # The initial rubric (competencies, disambiguation, scores, rules) is
+  # seeded directly by the schema; generate and link its prompts here
+  rubric_id <- tbl(conn, "rubric") |>
+    summarise(id = max(id, na.rm = TRUE)) |>
+    pull(id)
+  rubric_link_prompts(conn, rubric_id)
+
+  # Assign the same random sample of evaluations to every reviewer
+  set.seed(seed)
+  eval_sample <- tbl(conn, "evaluation") |>
+    group_by(summary_flg, complete) |>
+    slice_sample(n = n_assigned) |>
+    pull(id)
+
+  reviewer_ids <- c(ai_reviewer$id, human_reviewers$id)
+
+  assignments <- lapply(reviewer_ids, function(reviewer_id) {
+    dbReviewAssignment(
+      conn,
+      reviewer_id = reviewer_id,
+      evaluation_id = eval_sample,
+      rubric_id = rubric_id,
+      redacted = TRUE,
+      include_questions = TRUE
+    )
+  }) |>
+    bind_rows()
+
+  dbFinish(conn)
+
+  return(list(
+    ai_reviewer = ai_reviewer,
+    human_reviewers = human_reviewers,
+    rubric_id = rubric_id,
+    eval_sample = eval_sample,
+    assignments = assignments
+  ))
+}
+
 #' Check if a prompt is structured correctly and returned a parsed version
 #'
 #' @param prompt String of text to check

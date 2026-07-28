@@ -574,8 +574,9 @@ dbReviewerHuman <- function(
 ) {
   if (!missing(id)) {
     check <- id
+    x <- id
     id <- tbl(conn, "reviewer") |>
-      filter(id %in% {{ id }}, human == 1) |>
+      filter(id %in% x, human == 1) |>
       pull(id)
     # Check if exists
     if (length(id) == 0) {
@@ -588,8 +589,9 @@ dbReviewerHuman <- function(
   } else if (missing(username)) {
     stop("A new human reviewer needs at least a username")
   } else {
+    x <- username
     check <- tbl(conn, "reviewer") |>
-      filter(username %in% {{ username }}) |>
+      filter(username %in% x) |>
       pull(username)
     if (length(check) > 0) {
       stop(sprintf(

@@ -30,6 +30,7 @@ Imports:
   keyring,
   pins,
   pkgload,
+  readxl,
   rlang,
   RSQLite,
   shiny,
