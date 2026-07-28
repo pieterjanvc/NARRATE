@@ -736,7 +736,7 @@ dbReviewAssignment <- function(
         summarise(id = max(id, na.rm = TRUE)) |>
         pull(id)
       if (length(data$rubric_id) == 0 || is.na(data$rubric_id)) {
-        stop("No rubric found. Run rubric_process() first.")
+        stop("No rubric found. Run rubric_add() first.")
       }
     }
 

@@ -137,6 +137,7 @@ CREATE TABLE "rubric" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "prompt_extract_id" INTEGER,
   "prompt_score_id" INTEGER,
+  "prev_id" INTEGER,
   "info" TEXT,
   "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
   FOREIGN KEY ("prompt_extract_id") REFERENCES "prompt"("id") ON DELETE CASCADE,
@@ -227,6 +228,24 @@ CREATE TABLE "rubric_sentiment" (
   FOREIGN KEY ("sentiment_id") REFERENCES "sentiment"("id") ON DELETE CASCADE
 );
 
+CREATE TABLE "rule" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "title" TEXT NOT NULL,
+  "description" TEXT NOT NULL,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  "note" TEXT
+);
+
+CREATE TABLE "rubric_rule" (
+  "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+  "rubric_id" INTEGER NOT NULL,
+  "rule_id" INTEGER NOT NULL,
+  "order" INTEGER NOT NULL,
+  "timestamp" TEXT DEFAULT (datetime('now', 'localtime')),
+  FOREIGN KEY ("rubric_id") REFERENCES "rubric"("id") ON DELETE CASCADE,
+  FOREIGN KEY ("rule_id") REFERENCES "rule"("id") ON DELETE CASCADE
+);
+
 CREATE TABLE "competency_score" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "review_assignment_id" INTEGER NOT NULL,
@@ -287,3 +306,165 @@ INSERT INTO "status_codes" ("function", "code", "description") VALUES
   ('batch_results_preprocess', -1, 'Missing result'),
   ('batch_results_preprocess', -2, 'Parse error'),
   ('batch_results_preprocess',  2, 'Success');
+
+-- Default rubric seed data (competencies, disambiguation, scores, rules).
+-- Replaces the old inst/rubric.md parsing step; update values here directly
+-- if the rubric needs to change. IDs are hardcoded, relying on this running
+-- against a blank database.
+
+INSERT INTO "competency" ("id", "cID", "name", "description") VALUES
+  (1, 1, 'Medical Knowledge',
+    'Demonstrate understanding of foundational principles that underlie the ' ||
+    'medical sciences and apply this knowledge in care of individuals and ' ||
+    'populations. Generate an appropriate differential diagnosis.'),
+  (2, 2, 'Medical History Taking and Physical Examination',
+    'Elicit and synthesize a complete and accurate medical history and ' ||
+    'perform a focused or comprehensive physical examination, using ' ||
+    'information from the patient and other relevant sources.'),
+  (3, 3, 'Provide Effective Oral and Written Professional Communication',
+    'Communicate clinical information effectively, efficiently, and ' ||
+    'professionally in oral and written formats, including concise patient ' ||
+    'presentations on rounds and well-organized clinical documentation such ' ||
+    'as initial histories and physicals and daily progress notes to support ' ||
+    'patient care.'),
+  (4, 4, 'Clinical Reasoning and Decision Making',
+    'Efficiently evaluate patient data and use clinical problem solving to ' ||
+    'prioritize a differential diagnosis and establish an assessment and plan.'),
+  (5, 5, 'Interpersonal and Communication Skills',
+    'Form collaborative and trusting relationships with patients, ' ||
+    'caregivers, staff and all. Effectively communicate with patients and ' ||
+    'caregivers to promote shared decision making.'),
+  (6, 6, 'Scholarly Inquiry and Evidence-Based Medicine Integration',
+    'Evaluate, analyze, and apply new and existing knowledge across ' ||
+    'biomedical, clinical, population, and data sciences through continuous ' ||
+    'self-directed learning and scholarly activity to advance patient care.'),
+  (7, 7, 'Professionalism',
+    'Exemplify compassion, integrity, social responsibility and respect for ' ||
+    'all persons and identities. Demonstrate responsible behaviors including ' ||
+    'accountability, patient confidentiality and safety, punctuality and the ' ||
+    'prioritizing of the needs of others while maintaining appropriate ' ||
+    'self-care. Demonstrate and embody ethical standards, principles and ' ||
+    'moral reasoning in all professional interactions with patients, ' ||
+    'caregivers, colleagues and society at large.'),
+  (8, 8, 'Interprofessional and Team-Based Care',
+    'Collaborate effectively within interprofessional healthcare teams by ' ||
+    'communicating clearly and respectfully with physicians, nurses, staff ' ||
+    'and other health professionals to provide coordinated, patient-centered ' ||
+    'care.');
+
+INSERT INTO "competency_diff" ("competency_id1", "competency_id2", "description") VALUES
+  (3, 5,
+    'Comp 3 = quality and format of clinical documentation and formal oral ' ||
+    'presentations (notes, H&Ps, SOAP notes, rounds presentations). Comp 5 = ' ||
+    'direct relationship and communication with patients and families ' ||
+    'during encounters.'),
+  (1, 4,
+    'Comp 1 = demonstrating factual or conceptual knowledge, or generating ' ||
+    'a differential diagnosis. Comp 4 = applying knowledge to reason ' ||
+    'through a specific patient''s problem and arrive at a management plan.'),
+  (5, 8,
+    'Comp 5 = interactions with patients and caregivers only. Comp 8 = ' ||
+    'collaboration with physicians, nurses, and other health professionals.'),
+  (7, NULL,
+    'Only assign to Comp 7 for explicitly professional conduct — ethics, ' ||
+    'reliability, patient safety, punctuality, accountability. Do not use ' ||
+    'Comp 7 as a catch-all for positive character traits.');
+
+INSERT INTO "specificity" ("id", "value", "description", "example") VALUES
+  (1, 1,
+    'Competency is mentioned only with general or broad qualifier without ' ||
+    'example to support it',
+    'Impressive medical knowledge!'),
+  (2, 2,
+    'Detail about competency is mentioned without example to support it',
+    'Demonstrated a deep understanding of infectious disease'),
+  (3, 3,
+    'At least one specific example supports the competency',
+    'Was able to suggest empirical antibiotic regiments based on the ' ||
+    'initial infection and relevant patient characteristics'),
+  (4, 4,
+    'At least one very detailed example of a specific encounter providing ' ||
+    'exceptional support',
+    'Identified an opportunity to practice good antibiotic stewardship by ' ||
+    'suggesting to switch from Meropenem to Temocillin for a confirmed ' ||
+    'Proteus mirabilis catheter infection');
+
+INSERT INTO "utility" ("id", "value", "description", "example") VALUES
+  (1, 1,
+    'low/not useful: too vague or general to act upon',
+    'keep reading about important topics'),
+  (2, 2,
+    'moderately useful: includes student-specific recommendations for ' ||
+    'maintaining or improving performance but recommendations are hard to ' ||
+    'act upon',
+    'has strong theoretical knowledge, but should practice clinical reasoning'),
+  (3, 3,
+    'highly useful: student-specific, actionable recommendations for ' ||
+    'maintaining or improving performance',
+    'review disease management guidelines to help improve clinical ' ||
+    'decision making');
+
+INSERT INTO "sentiment" ("id", "value", "description", "example") VALUES
+  (1, 1,
+    'strongly negative (e.g. red flags)',
+    'did not have adequate fund of knowledge'),
+  (2, 2,
+    'negative (e.g. coded language indicating potential criticism)',
+    'I would recommend that she continue practicing how to identify and ' ||
+    'prioritize clinically relevant information when documenting (such as ' ||
+    'which symptoms patients report that are actually clinically relevant ' ||
+    'to the current presentation or not).'),
+  (3, 3,
+    'Neutral or not enough information to indicate sentiment',
+    'Her solid foundation in medical knowledge is evident - Continue reading'),
+  (4, 4,
+    'positive (e.g. empty praise or clearly positive but generic)',
+    'Was a pleasure to work with! Strong performance.'),
+  (5, 5,
+    'strongly positive (e.g. signaling exceptional student)',
+    'The level of care taken to review each patient case set her apart ' ||
+    'from most other interns I have worked with over the years. ' ||
+    'She''s working at the level of an PGY1');
+
+INSERT INTO "rule" ("id", "title", "description") VALUES
+  (1, 'Minimum bar',
+    'Only include a competency if the evaluation makes a clear, specific ' ||
+    'reference to it. Generic phrases that could apply to any competency ' ||
+    '— "great attitude", "hard worker", "pleasure to work with" — do not ' ||
+    'constitute evidence for any specific competency. When in doubt, leave ' ||
+    'it out.'),
+  (2, 'One competency per quote',
+    'Assign each piece of text to maximum one competency — i.e. the most ' ||
+    'specific match. Do not repeat the same text under two competencies. ' ||
+    'Sometimes content is repeated (slightly differently worded but same ' ||
+    'meaning), in which case you treat this as a single quote. See the ' ||
+    'disambiguation section below for details.'),
+  (3, 'Verbatim only',
+    'Copy the exact text from the evaluation. Do not paraphrase, ' ||
+    'summarize, or combine sentences. Multiple spans across the text can ' ||
+    'be used if relevant. Include all illustrating examples (as long as ' ||
+    'they don''t belong to another competency)'),
+  (4, 'Missing is normal',
+    'Most clerkship evaluations might only explicitly address 2–4 ' ||
+    'competencies. Do not force a match to reach a higher number.'),
+  (5, 'Include both positive and negative',
+    'The aim is to extract all pieces of text related to a competency ' ||
+    'regardless of sentiment (i.e. positive and negative)');
+
+INSERT INTO "rubric" ("id") VALUES (1);
+
+INSERT INTO "rubric_competency" ("rubric_id", "competency_id", "order") VALUES
+  (1, 1, 1), (1, 2, 2), (1, 3, 3), (1, 4, 4),
+  (1, 5, 5), (1, 6, 6), (1, 7, 7), (1, 8, 8);
+
+INSERT INTO "rubric_specificity" ("rubric_id", "specificity_id") VALUES
+  (1, 1), (1, 2), (1, 3), (1, 4);
+
+INSERT INTO "rubric_utility" ("rubric_id", "utility_id") VALUES
+  (1, 1), (1, 2), (1, 3);
+
+INSERT INTO "rubric_sentiment" ("rubric_id", "sentiment_id") VALUES
+  (1, 1), (1, 2), (1, 3), (1, 4), (1, 5);
+
+INSERT INTO "rubric_rule" ("rubric_id", "rule_id", "order") VALUES
+  (1, 1, 1), (1, 2, 2), (1, 3, 3), (1, 4, 4), (1, 5, 5);

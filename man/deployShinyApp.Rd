@@ -4,7 +4,7 @@
 \alias{deployShinyApp}
 \title{Delop Shiny App}
 \usage{
-deployShinyApp(db, gitHubBranch, dev = F)
+deployShinyApp(db, gitHubBranch, dev = F, app_file = "inst/review_app.R")
 }
 \arguments{
 \item{db}{Database to use}

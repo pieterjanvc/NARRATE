@@ -20,9 +20,13 @@ combined_data <- readxl::read_xlsx(
 # Add default AI reviewer
 . <- dbReviewerAI(conn, model = formals(llm_comp_extract)$model)
 
-# Parse rubric.md, sync competency/score tables, create rubric row and prompts.
-# Re-run whenever inst/rubric.md or the prompt templates change.
-rubric <- rubric_process(conn)
+# The initial rubric (competencies, disambiguation, scores, rules) is seeded
+# directly by inst/narrate.sql. Generate and link its prompts here — re-run
+# whenever the prompt templates change.
+rubric_id <- tbl(conn, "rubric") |>
+  summarise(id = max(id, na.rm = TRUE)) |>
+  pull(id)
+rubric <- rubric_link_prompts(conn, rubric_id)
 
 # Assign a random sample of evaluations to reviewer 1
 # rubric_id defaults to the most recently created rubric (rubric$id above)

@@ -18,8 +18,11 @@ combined_data <- readxl::read_xlsx(
 # Add default AI reviewer
 . <- dbReviewerAI(conn, model = "gpt-5.1")
 . <- dbReviewerHuman(conn, username = c("TK", "AW", "KM", "PJ"))
-# Process the rubric and generate prompts
-rubric_process(conn)
+# The initial rubric is seeded directly by inst/narrate.sql; link its prompts
+rubric_id <- tbl(conn, "rubric") |>
+  summarise(id = max(id, na.rm = TRUE)) |>
+  pull(id)
+rubric_link_prompts(conn, rubric_id)
 
 dbAddCoreFaculty("local/core_faculty.csv", conn)
 

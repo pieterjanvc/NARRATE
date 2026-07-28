@@ -15,14 +15,15 @@ prompt_generate(conn, rubric_id = NULL)
 Named list with elements \code{extract} and \code{score}
 }
 \description{
-Replaces \code{\{competencies\}}, \code{\{disambiguation\}}, and per-category
-score placeholders (\code{\{specificity\}}, \code{\{utility\}},
+Replaces \code{\{competencies\}}, \code{\{disambiguation\}}, \code{\{rules\}},
+and per-category score placeholders (\code{\{specificity\}}, \code{\{utility\}},
 \code{\{sentiment\}}) with content queried from the database for the
 specified rubric.
 }
 \details{
-Competencies and score options are ordered by the \code{order} column in the
-rubric join tables, so the prompt reflects the rubric's intended sequence.
+Competencies, rules, and score options are ordered by the \code{order}
+column in the rubric join tables, so the prompt reflects the rubric's
+intended sequence.
 
 Note: placeholder replacement uses \code{gsub(fixed = TRUE)}, not
 \code{glue}, so JSON braces in the template OUTPUT sections are safe.

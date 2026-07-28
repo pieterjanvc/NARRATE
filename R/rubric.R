@@ -1,346 +1,207 @@
-#' Parse inst/rubric.md and insert competency, disambiguation, and score data into the database
+#' Read the id vectors currently linked to a rubric
+#'
+#' Internal helper used by \code{rubric_add()} to resolve omitted arguments
+#' when building a new rubric from a previous one.
 #'
 #' @param conn Database connection
-#' @param rubric_path Path to rubric.md (defaults to package inst file)
-#' @param commit (Default = TRUE) Commit the results to the database.
+#' @param rubric_id Integer rubric ID to read linked ids from
 #'
 #' @import dplyr
-#' @importFrom sqlife tbl_insert
-#' @importFrom stringr str_trim str_match str_detect
 #'
-#' @returns Invisibly, a list of inserted data frames: competency, competency_diff, score
-#' @export
-rubric_parsing <- function(conn, rubric_path = NULL, commit = T) {
-  if (is.null(rubric_path)) {
-    rubric_path <- system.file("rubric.md", package = "NARRATE")
-    if (rubric_path == "") rubric_path <- "inst/rubric.md"
-  }
+#' @returns Named list with elements \code{competency_ids}, \code{specificity_ids},
+#'   \code{utility_ids}, \code{sentiment_ids}, \code{rule_ids}
+#' @keywords internal
+rubric_current_ids <- function(conn, rubric_id) {
+  rid <- rubric_id
 
-  lines <- readLines(rubric_path, warn = FALSE)
+  competency_ids <- tbl(conn, "rubric_competency") |>
+    filter(rubric_id == local(rid)) |>
+    arrange(order) |>
+    pull(competency_id)
 
-  collapse_text <- function(ls) {
-    ls <- str_trim(ls)
-    paste(ls[nchar(ls) > 0], collapse = " ")
-  }
-
-  # Parse "- N: text..." bullet lists; continuation lines are indented with 2+ spaces
-  parse_bullets <- function(ls) {
-    result <- list()
-    key <- NULL
-    parts <- character(0)
-    for (line in ls) {
-      m <- str_match(line, "^- (\\S+?):\\s*(.*)")
-      if (!is.na(m[1, 1])) {
-        if (!is.null(key)) {
-          result[[key]] <- paste(str_trim(parts), collapse = " ")
-        }
-        key <- m[1, 2]
-        parts <- m[1, 3]
-      } else if (!is.null(key) && str_detect(line, "^  \\S")) {
-        parts <- c(parts, str_trim(line))
-      }
-    }
-    if (!is.null(key)) {
-      result[[key]] <- paste(str_trim(parts), collapse = " ")
-    }
-    result
-  }
-
-  # Section boundary lines
-  scoring_line <- which(lines == "# SCORING")
-  definitions_line <- which(lines == "## Definitions")
-  disambig_line <- which(lines == "## Disambiguation")
-
-  # --- Competency definitions ---
-  def_block <- lines[definitions_line:(disambig_line - 1)]
-  header_pos <- which(str_detect(def_block, "^### \\d+\\."))
-
-  comp_numbers <- integer(0)
-  comp_names <- character(0)
-  comp_descs <- character(0)
-
-  for (i in seq_along(header_pos)) {
-    h <- header_pos[i]
-    m <- str_match(def_block[h], "^### (\\d+)\\.\\s*(.*)")
-    comp_numbers <- c(comp_numbers, as.integer(m[1, 2]))
-    comp_names <- c(comp_names, str_trim(m[1, 3]))
-    body_end <- if (i < length(header_pos)) {
-      header_pos[i + 1] - 1
-    } else {
-      length(def_block)
-    }
-    comp_descs <- c(comp_descs, collapse_text(def_block[(h + 1):body_end]))
-  }
-
-  competency_df <- data.frame(
-    cID = comp_numbers,
-    name = comp_names,
-    description = comp_descs,
-    stringsAsFactors = FALSE
-  )
-
-  # --- Disambiguation ---
-  disambig_block <- lines[disambig_line:(scoring_line - 1)]
-  disambig_headers <- which(str_detect(disambig_block, "^### Comp "))
-
-  diff_num1 <- integer(0)
-  diff_num2 <- integer(0)
-  diff_descs <- character(0)
-
-  for (i in seq_along(disambig_headers)) {
-    h <- disambig_headers[i]
-    m <- str_match(disambig_block[h], "Comp (\\d+) vs\\.?\\s*(\\d+|others)")
-    diff_num1 <- c(diff_num1, as.integer(m[1, 2]))
-    diff_num2 <- c(diff_num2, suppressWarnings(as.integer(m[1, 3]))) # NA for "others"
-    body_end <- if (i < length(disambig_headers)) {
-      disambig_headers[i + 1] - 1
-    } else {
-      length(disambig_block)
-    }
-    diff_descs <- c(diff_descs, collapse_text(disambig_block[(h + 1):body_end]))
-  }
-
-  # --- Scoring ---
-  scoring_block <- lines[scoring_line:length(lines)]
-  cat_pos <- which(str_detect(scoring_block, "^## "))
-
-  score_categories <- character(0)
-  score_values <- character(0)
-  score_descs <- character(0)
-  score_examples <- character(0)
-
-  for (i in seq_along(cat_pos)) {
-    h <- cat_pos[i]
-    category <- str_trim(sub("^## ", "", scoring_block[h]))
-    body_end <- if (i < length(cat_pos)) {
-      cat_pos[i + 1] - 1
-    } else {
-      length(scoring_block)
-    }
-    cat_block <- scoring_block[h:body_end]
-
-    levels_h <- which(str_detect(cat_block, "^### Levels"))
-    examples_h <- which(str_detect(cat_block, "^### Guiding examples"))
-
-    if (length(levels_h) == 0) {
-      next
-    }
-
-    level_end <- if (length(examples_h) > 0) {
-      examples_h[1] - 1
-    } else {
-      length(cat_block)
-    }
-    levels <- parse_bullets(cat_block[(levels_h[1] + 1):level_end])
-    examples <- if (length(examples_h) > 0) {
-      parse_bullets(cat_block[(examples_h[1] + 1):length(cat_block)])
-    } else {
-      list()
-    }
-
-    for (v in names(levels)) {
-      score_categories <- c(score_categories, category)
-      score_values <- c(score_values, v)
-      score_descs <- c(score_descs, levels[[v]])
-      score_examples <- c(
-        score_examples,
-        if (!is.null(examples[[v]])) examples[[v]] else NA_character_
-      )
-    }
-  }
-
-  make_score_df <- function(cat) {
-    idx <- score_categories == cat
-    data.frame(
-      value = as.integer(score_values[idx]),
-      description = score_descs[idx],
-      example = score_examples[idx],
-      stringsAsFactors = FALSE
-    )
-  }
-  specificity_df <- make_score_df("Specificity")
-  utility_df <- make_score_df("Utility")
-  sentiment_df <- make_score_df("Sentiment")
-
-  # --- Insert (skip rows whose content has not changed) ---
-  existing_comp <- tbl(conn, "competency") |>
-    select(id, name, description) |>
-    collect()
-
-  to_insert_comp <- anti_join(
-    competency_df,
-    existing_comp,
-    by = c("name", "description")
-  )
-  if (nrow(to_insert_comp) > 0) {
-    tbl_insert(to_insert_comp, conn, "competency", commit = commit)
-  }
-
-  # Build ID map keyed by position number; pick the latest id if duplicates exist
-  comp_id_map <- tbl(conn, "competency") |>
-    select(id, name, description) |>
-    collect() |>
-    inner_join(
-      competency_df |> select(cID, name, description),
-      by = c("name", "description")
+  specificity_ids <- tbl(conn, "rubric_specificity") |>
+    filter(rubric_id == local(rid)) |>
+    left_join(
+      tbl(conn, "specificity") |> select(specificity_id = id, value),
+      by = "specificity_id"
     ) |>
-    group_by(cID) |>
-    filter(id == max(id)) |>
-    ungroup() |>
-    (\(d) setNames(d$id, as.character(d$cID)))()
+    arrange(value) |>
+    pull(specificity_id)
 
-  competency_diff_df <- data.frame(
-    competency_id1 = comp_id_map[as.character(diff_num1)],
-    competency_id2 = ifelse(
-      is.na(diff_num2),
-      NA_integer_,
-      comp_id_map[as.character(diff_num2)]
-    ),
-    description = diff_descs,
-    stringsAsFactors = FALSE
+  utility_ids <- tbl(conn, "rubric_utility") |>
+    filter(rubric_id == local(rid)) |>
+    left_join(
+      tbl(conn, "utility") |> select(utility_id = id, value),
+      by = "utility_id"
+    ) |>
+    arrange(value) |>
+    pull(utility_id)
+
+  sentiment_ids <- tbl(conn, "rubric_sentiment") |>
+    filter(rubric_id == local(rid)) |>
+    left_join(
+      tbl(conn, "sentiment") |> select(sentiment_id = id, value),
+      by = "sentiment_id"
+    ) |>
+    arrange(value) |>
+    pull(sentiment_id)
+
+  rule_ids <- tbl(conn, "rubric_rule") |>
+    filter(rubric_id == local(rid)) |>
+    arrange(order) |>
+    pull(rule_id)
+
+  list(
+    competency_ids = competency_ids,
+    specificity_ids = specificity_ids,
+    utility_ids = utility_ids,
+    sentiment_ids = sentiment_ids,
+    rule_ids = rule_ids
   )
-
-  existing_diff <- tbl(conn, "competency_diff") |>
-    select(competency_id1, competency_id2, description) |>
-    collect()
-  to_insert_diff <- anti_join(
-    competency_diff_df,
-    existing_diff,
-    by = c("competency_id1", "competency_id2", "description")
-  )
-  if (nrow(to_insert_diff) > 0) {
-    tbl_insert(to_insert_diff, conn, "competency_diff", commit = commit)
-  }
-
-  insert_score_table <- function(df, table_name) {
-    existing <- tbl(conn, table_name) |>
-      select(value, description, example) |>
-      collect()
-    to_insert <- anti_join(
-      df,
-      existing,
-      by = c("value", "description", "example")
-    )
-    if (nrow(to_insert) > 0) {
-      tbl_insert(to_insert, conn, table_name, commit = commit)
-    }
-    to_insert
-  }
-
-  to_insert_specificity <- insert_score_table(specificity_df, "specificity")
-  to_insert_utility <- insert_score_table(utility_df, "utility")
-  to_insert_sentiment <- insert_score_table(sentiment_df, "sentiment")
-
-  invisible(list(
-    competency = to_insert_comp,
-    competency_diff = to_insert_diff,
-    specificity = to_insert_specificity,
-    utility = to_insert_utility,
-    sentiment = to_insert_sentiment,
-    comp_ids = unname(comp_id_map[as.character(comp_numbers)])
-  ))
 }
 
-#' Parse the rubric file, sync content tables, and create a versioned rubric row
+#' Create a new rubric from content-table ids
 #'
-#' Runs \code{rubric_parsing()} to sync competency and score tables, then
-#' creates a new rubric row, populates its join tables, generates both filled
-#' prompt templates, stores them via \code{dbAddPrompt()}, and writes the
-#' resulting prompt IDs back to the rubric row.
+#' Builds a new, versioned \code{rubric} row from ids in the \code{competency},
+#' \code{specificity}, \code{utility}, \code{sentiment}, and \code{rule} tables,
+#' populates the corresponding join tables, generates both filled prompt
+#' templates via \code{rubric_link_prompts()}, and returns the resulting rubric
+#' row.
 #'
-#' If the rubric content has not changed since the last run (no new rows from
-#' \code{rubric_parsing()} and the latest rubric already has both prompt IDs
-#' set), the existing rubric row is returned without creating a new one.
+#' Disambiguation text is not passed in directly: \code{prompt_generate()}
+#' automatically includes any \code{competency_diff} rows whose competencies
+#' are both present in \code{competency_ids}.
+#'
+#' If \code{prev_id} is supplied, any of \code{competency_ids},
+#' \code{specificity_ids}, \code{utility_ids}, \code{sentiment_ids}, or
+#' \code{rule_ids} may be omitted (\code{NULL}); omitted ones are carried
+#' forward unchanged from \code{prev_id}. The new row's \code{prev_id} column
+#' records this lineage. If \code{prev_id} is \code{NULL}, all five id
+#' arguments are required.
 #'
 #' @param conn Database connection
+#' @param competency_ids Integer vector of \code{competency.id}, in display order
+#' @param specificity_ids Integer vector of \code{specificity.id}
+#' @param utility_ids Integer vector of \code{utility.id}
+#' @param sentiment_ids Integer vector of \code{sentiment.id}
+#' @param rule_ids Integer vector of \code{rule.id}, in display order
+#' @param info (Optional) Note describing this rubric version
+#' @param prev_id (Optional) Rubric ID this version is derived from. When set,
+#'   omitted id arguments are copied forward from this rubric.
 #' @param showWarning Pass through to \code{dbAddPrompt()}. Default = FALSE.
 #'
 #' @import dplyr
-#' @importFrom sqlife tbl_insert tbl_update
+#' @importFrom sqlife tbl_insert
 #'
-#' @returns The rubric table row (data frame) for the active rubric
+#' @returns The rubric table row (data frame) for the newly created rubric
 #' @export
-rubric_process <- function(conn, showWarning = FALSE) {
-  inserted <- rubric_parsing(conn)
-  content_changed <- any(
-    sapply(inserted[names(inserted) != "comp_ids"], nrow) > 0
-  )
-
-  latest_rubric <- tbl(conn, "rubric") |>
-    filter(id == max(id, na.rm = TRUE)) |>
-    collect()
-
-  already_linked <- nrow(latest_rubric) > 0 &&
-    !is.na(latest_rubric$prompt_extract_id) &&
-    !is.na(latest_rubric$prompt_score_id)
-
-  if (!content_changed && already_linked) {
-    if (showWarning) {
-      message(
-        "Rubric content unchanged; using existing rubric ",
-        latest_rubric$id
-      )
-    }
-    return(latest_rubric)
+rubric_add <- function(
+  conn,
+  competency_ids = NULL,
+  specificity_ids = NULL,
+  utility_ids = NULL,
+  sentiment_ids = NULL,
+  rule_ids = NULL,
+  info = NULL,
+  prev_id = NULL,
+  showWarning = FALSE
+) {
+  if (!is.null(prev_id)) {
+    prev_ids <- rubric_current_ids(conn, prev_id)
+    if (is.null(competency_ids)) competency_ids <- prev_ids$competency_ids
+    if (is.null(specificity_ids)) specificity_ids <- prev_ids$specificity_ids
+    if (is.null(utility_ids)) utility_ids <- prev_ids$utility_ids
+    if (is.null(sentiment_ids)) sentiment_ids <- prev_ids$sentiment_ids
+    if (is.null(rule_ids)) rule_ids <- prev_ids$rule_ids
   }
 
-  # Gather the latest ID for each entity, ordered as the rubric intends.
-  # rubric_parsing() already resolved name/description → competency id in
-  # markdown order, so we reuse that result directly.
-  latest_comp_ids <- inserted$comp_ids
+  missing_args <- c(
+    "competency_ids", "specificity_ids", "utility_ids",
+    "sentiment_ids", "rule_ids"
+  )[
+    sapply(
+      list(competency_ids, specificity_ids, utility_ids, sentiment_ids, rule_ids),
+      is.null
+    )
+  ]
+  if (length(missing_args) > 0) {
+    stop(
+      "Missing required id(s): ",
+      paste(missing_args, collapse = ", "),
+      ". Provide them directly or via `prev_id`."
+    )
+  }
 
-  latest_spec_ids <- tbl(conn, "specificity") |>
-    collect() |>
-    arrange(value) |>
-    pull(id)
-  latest_util_ids <- tbl(conn, "utility") |>
-    collect() |>
-    arrange(value) |>
-    pull(id)
-  latest_sent_ids <- tbl(conn, "sentiment") |>
-    collect() |>
-    arrange(value) |>
-    pull(id)
-
-  # Create the new rubric row (prompts filled in below)
   new_rubric <- tbl_insert(
-    data.frame(prompt_extract_id = NA_integer_, prompt_score_id = NA_integer_),
+    data.frame(
+      prompt_extract_id = NA_integer_,
+      prompt_score_id = NA_integer_,
+      prev_id = if (is.null(prev_id)) NA_integer_ else prev_id,
+      info = if (is.null(info)) NA_character_ else info
+    ),
     conn,
     "rubric"
   )
   rubric_id <- new_rubric$id
 
-  # Populate rubric join tables
   tbl_insert(
     data.frame(
       rubric_id = rubric_id,
-      competency_id = latest_comp_ids,
-      order = seq_along(latest_comp_ids)
+      competency_id = competency_ids,
+      order = seq_along(competency_ids)
     ),
     conn,
     "rubric_competency",
     returnData = FALSE
   )
   tbl_insert(
-    data.frame(rubric_id = rubric_id, specificity_id = latest_spec_ids),
+    data.frame(rubric_id = rubric_id, specificity_id = specificity_ids),
     conn,
     "rubric_specificity",
     returnData = FALSE
   )
   tbl_insert(
-    data.frame(rubric_id = rubric_id, utility_id = latest_util_ids),
+    data.frame(rubric_id = rubric_id, utility_id = utility_ids),
     conn,
     "rubric_utility",
     returnData = FALSE
   )
   tbl_insert(
-    data.frame(rubric_id = rubric_id, sentiment_id = latest_sent_ids),
+    data.frame(rubric_id = rubric_id, sentiment_id = sentiment_ids),
     conn,
     "rubric_sentiment",
     returnData = FALSE
   )
+  tbl_insert(
+    data.frame(
+      rubric_id = rubric_id,
+      rule_id = rule_ids,
+      order = seq_along(rule_ids)
+    ),
+    conn,
+    "rubric_rule",
+    returnData = FALSE
+  )
 
-  # Generate filled prompts and store them
+  rubric_link_prompts(conn, rubric_id, showWarning = showWarning)
+}
+
+#' Generate and store prompts for an existing rubric row
+#'
+#' Runs \code{prompt_generate()} for \code{rubric_id}, stores both resulting
+#' prompts via \code{dbAddPrompt()}, and writes the prompt IDs back onto the
+#' rubric row.
+#'
+#' @param conn Database connection
+#' @param rubric_id Integer rubric ID to generate and link prompts for
+#' @param showWarning Pass through to \code{dbAddPrompt()}. Default = FALSE.
+#'
+#' @import dplyr
+#' @importFrom sqlife tbl_update
+#'
+#' @returns The rubric table row (data frame) for \code{rubric_id}
+#' @export
+rubric_link_prompts <- function(conn, rubric_id, showWarning = FALSE) {
   prompts <- prompt_generate(conn, rubric_id = rubric_id)
   prompt_extract_id <- dbAddPrompt(
     prompts$extract,
@@ -355,7 +216,6 @@ rubric_process <- function(conn, showWarning = FALSE) {
     showWarning = showWarning
   )
 
-  # Write prompt IDs back to the rubric row
   tbl_update(
     data.frame(
       id = rubric_id,
