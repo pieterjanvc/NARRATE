@@ -20,6 +20,7 @@
 #' `path`, stop unless this is TRUE. If TRUE, the existing database (and any
 #' `-wal` / `-shm` / `-journal` sidecar files) is moved to the system temp
 #' folder with a timestamp appended before a new one is created
+#' @param verbose (Default = TRUE) Show messages with the steps in the process
 #'
 #' @import dplyr
 #' @importFrom readxl read_xlsx
@@ -38,11 +39,11 @@ narrate_init <- function(
   n_assigned = 3,
   seed = 1,
   redactedOnly = TRUE,
-  force_overwrite = FALSE
+  force_overwrite = FALSE,
+  verbose = TRUE
 ) {
   if (pkgload::is_dev_package("NARRATE")) {
     schema <- "inst/narrate.sql"
-    print("USED LOCAL!")
   } else {
     schema <- system.file("narrate.sql", package = "NARRATE")
   }
@@ -54,6 +55,8 @@ narrate_init <- function(
         path,
         ". Set force_overwrite = TRUE to replace it."
       )
+    } else if (verbose) {
+      print("Move old database to temp folder")
     }
 
     timestamp <- as.integer(Sys.time())
@@ -78,12 +81,21 @@ narrate_init <- function(
     }
   }
 
+  if (verbose) {
+    print("Creating new database with default values")
+  }
   dbSetup(path, schema)
 
   # Add all evaluation data (manages its own connection internally)
+  if (verbose) {
+    print("Adding data")
+  }
   combined_data <- readxl::read_xlsx(dataset)
   dbAddEvaluations(combined_data, path, redactedOnly = redactedOnly)
 
+  if (verbose) {
+    print("Random initial review assignments")
+  }
   conn <- dbGetConn(path)
 
   # Add default AI and human reviewers
@@ -123,13 +135,7 @@ narrate_init <- function(
 
   dbFinish(conn)
 
-  return(list(
-    ai_reviewer = ai_reviewer,
-    human_reviewers = human_reviewers,
-    rubric_id = rubric_id,
-    eval_sample = eval_sample,
-    assignments = assignments
-  ))
+  return(invisible(TRUE))
 }
 
 #' Check if a prompt is structured correctly and returned a parsed version
