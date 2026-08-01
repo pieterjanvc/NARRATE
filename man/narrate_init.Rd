@@ -12,7 +12,8 @@ narrate_init(
   n_assigned = 3,
   seed = 1,
   redactedOnly = TRUE,
-  force_overwrite = FALSE
+  force_overwrite = FALSE,
+  verbose = TRUE
 )
 }
 \arguments{
@@ -38,6 +39,8 @@ are inserted into the database; the version with identifiers is omitted}
 \code{path}, stop unless this is TRUE. If TRUE, the existing database (and any
 \code{-wal} / \code{-shm} / \code{-journal} sidecar files) is moved to the system temp
 folder with a timestamp appended before a new one is created}
+
+\item{verbose}{(Default = TRUE) Show messages with the steps in the process}
 }
 \value{
 A list with the AI and human reviewer records, the rubric id,

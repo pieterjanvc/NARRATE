@@ -1,7 +1,12 @@
-#' Module UI for text highlights
+#' Module UI for text highlight controls
 #'
 #' UI has a button with underneath a compact element where a list of selected
-#' peices of text are displayed and can be removed again.
+#' peices of text (belonging to the currently active group) are displayed and
+#' can be removed again.
+#'
+#' Must be paired with a [mod_highlight_ui_text()] call using the *same*
+#' module `id`, and both wired up to a single [mod_highlight_server()] call
+#' (also using that `id`).
 #'
 #' @param id Module ID
 #' @param element (Optional) Limit text selection to a specific HTML element ID
@@ -14,7 +19,7 @@
 #' @returns Shiny UI element
 #' @export
 #'
-mod_highlight_ui <- function(
+mod_highlight_ui_controls <- function(
   id,
   element,
   label = "Text evidence",
@@ -56,145 +61,403 @@ mod_highlight_ui <- function(
   )
 }
 
+#' Module UI for the highlighted text display
+#'
+#' Contains only a [uiOutput()] that the paired [mod_highlight_server()]
+#' renders the source text into (with highlight `<span>`s injected around
+#' the currently saved selections). Also carries the selection-capture script,
+#' since it needs to reference this element's own container id directly.
+#'
+#' Must be paired with a [mod_highlight_ui_controls()] call using the *same*
+#' module `id`, and both wired up to a single [mod_highlight_server()] call
+#' (also using that `id`).
+#'
+#' @param id Module ID
+#'
+#' @import shiny
+#'
+#' @returns Shiny UI element
+#' @export
+#'
+mod_highlight_ui_text <- function(id) {
+  ns <- NS(id)
+  tagList(
+    tags$script(HTML(sprintf(
+      "
+  (function() {
+    function getOffset(container, node, offset) {
+      var r = document.createRange();
+      r.selectNodeContents(container);
+      r.setEnd(node, offset);
+      return r.toString().length;
+    }
+
+    document.addEventListener('mouseup', function() {
+      var container = document.getElementById('%1$s');
+      if (!container) return;
+
+      var selection = window.getSelection();
+      if (
+        selection.rangeCount > 0 &&
+        container.contains(selection.anchorNode) &&
+        container.contains(selection.focusNode)
+      ) {
+        var range = selection.getRangeAt(0);
+        var start = getOffset(container, range.startContainer, range.startOffset);
+        var end = getOffset(container, range.endContainer, range.endOffset);
+        if (start > end) {
+          var tmp = start;
+          start = end;
+          end = tmp;
+        }
+        Shiny.setInputValue('%2$s', {start: start, end: end, text: selection.toString()});
+      } else {
+        Shiny.setInputValue('%2$s', {start: 0, end: 0, text: ''});
+      }
+    });
+  })();
+  ",
+      ns("textDisplay"),
+      ns("selInfo")
+    ))),
+    uiOutput(ns("textDisplay"))
+  )
+}
+
+#' Strip HTML tags from a string
+#'
+#' Converts HTML to the plain-text, tag-stripped coordinate space that
+#' [mod_highlight_server()] and its client-side selection capture use for
+#' `start`/`end` offsets.
+#'
+#' @param html Character string in HTML format
+#'
+#' @returns Character string with tags removed
+#' @export
+#'
+mod_highlight_strip_tags <- function(html) {
+  gsub("<[^>]+>", "", html)
+}
+
+#' Locate verbatim text matches within a plain-text string
+#'
+#' Used to backfill `start`/`end` offsets for highlights that were captured
+#' as plain text only (e.g. AI-extracted competency evidence), by finding
+#' each match's first occurrence that doesn't overlap a previously claimed
+#' range. Matches are resolved in the order given, so earlier entries in
+#' `matches` get first pick of ambiguous (repeated) occurrences.
+#'
+#' @param plainText Character string to search within (tag-stripped)
+#' @param matches Character vector of verbatim substrings to locate
+#'
+#' @returns Data frame with columns `start`, `end` (0-indexed, half-open,
+#' one row per element of `matches`). Both are `NA` where a match couldn't
+#' be located without overlapping an earlier claim.
+#' @export
+#'
+mod_highlight_locate <- function(plainText, matches) {
+  claimedStart <- integer(0)
+  claimedEnd <- integer(0)
+  starts <- rep(NA_integer_, length(matches))
+  ends <- rep(NA_integer_, length(matches))
+
+  for (i in seq_along(matches)) {
+    m <- matches[i]
+    if (is.na(m) || !nzchar(m)) next
+
+    pos <- gregexpr(m, plainText, fixed = TRUE)[[1]]
+    if (pos[1] == -1) next
+    lens <- attr(pos, "match.length")
+
+    chosen <- NULL
+    for (j in seq_along(pos)) {
+      s <- pos[j] - 1L
+      e <- s + lens[j]
+      overlaps <- any(claimedStart < e & claimedEnd > s)
+      if (!overlaps) {
+        chosen <- c(s, e)
+        break
+      }
+    }
+    if (is.null(chosen)) next
+
+    starts[i] <- chosen[1]
+    ends[i] <- chosen[2]
+    claimedStart <- c(claimedStart, chosen[1])
+    claimedEnd <- c(claimedEnd, chosen[2])
+  }
+
+  data.frame(start = starts, end = ends)
+}
+
 #' Module server for text highlights
 #'
 #' @param id Module ID
-#' @param defaults A (reactive) vector of default list options
-#' @param reset An optional reactive variable that will rest to the defaults when triggered
+#' @param text A (reactive) character string with the source text to render,
+#' in HTML format. Changing this fully resets the module's state back to
+#' `init_vals()`.
+#' @param cur_group_id A (reactive) value with the currently active group ID.
+#' Highlights belonging to this group are shown in yellow, all others in
+#' light gray. Changing this does not reset the state, only the display.
+#' @param init_vals A (reactive) data frame with the initial highlights to
+#' seed the state with whenever `text` changes. Expected columns are
+#' `group_id`, `start`, `end` and `text`; `start`/`end` must use the same
+#' plain-text (tag-stripped), zero-indexed, half-open coordinate system that
+#' the module itself uses internally. Any `id` column is ignored - fresh
+#' internal ids are always assigned on seed.
 #'
 #' @import shiny dplyr
 #'
-#' @returns A reactive data frame with selected pieces of text and an ID in the
-#' order they were listed on the page
+#' @returns A reactive data frame with columns `id`, `group_id`, `start`,
+#' `end` and `text`, holding all saved highlights across all groups.
 #'
 #' @export
 #'
-mod_highlight_server <- function(id, defaults, reset = reactiveVal()) {
+mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
   moduleServer(id, function(input, output, session) {
-    # Keep track of how many highlights were saved
-    counter <- reactiveVal(0)
-    if (!is.reactive(defaults)) {
-      defaults <- reactiveVal(defaults)
+    ns <- session$ns
+
+    if (!is.reactive(text)) {
+      text <- reactiveVal(text)
+    }
+    if (!is.reactive(cur_group_id)) {
+      cur_group_id <- reactiveVal(cur_group_id)
+    }
+    if (!is.reactive(init_vals)) {
+      init_vals <- reactiveVal(init_vals)
     }
 
-    # Current list of saved higlights
-    sels <- reactiveVal(data.frame(
-      id = integer(),
-      btn = character(),
-      text = character(),
-      new = logical()
-    ))
+    # Counter to hand out fresh internal ids
+    counter <- reactiveVal(0)
 
-    # Function to text to the UI list
-    addToList <- function(id, countIds, values) {
-      for (i in 1:length(countIds)) {
+    # Handles of the dynamically registered delete-button observers, keyed by
+    # button id, so a full reset can destroy them instead of leaking/duplicating
+    deleteObservers <- list()
+
+    emptyState <- function() {
+      data.frame(
+        id = integer(),
+        group_id = character(),
+        start = integer(),
+        end = integer(),
+        text = character(),
+        stringsAsFactors = FALSE
+      )
+    }
+
+    state <- reactiveVal(emptyState())
+
+    # Build a fresh state data frame from init_vals, ignoring any incoming id
+    seedState <- function() {
+      iv <- init_vals()
+      if (is.null(iv) || nrow(iv) == 0) {
+        return(emptyState())
+      }
+      data.frame(
+        id = seq_len(nrow(iv)),
+        group_id = as.character(iv$group_id),
+        start = as.integer(iv$start),
+        end = as.integer(iv$end),
+        text = as.character(iv$text),
+        stringsAsFactors = FALSE
+      )
+    }
+
+    # Splice highlight <span>s into the source HTML for the current state.
+    # Coordinates are plain-text (tag-stripped), zero-indexed and half-open,
+    # matching what the client-side selection capture produces.
+    buildHighlightedHtml <- function(txt, df, activeGroup) {
+      if (is.null(txt) || !nzchar(txt)) {
+        return(HTML(""))
+      }
+      if (nrow(df) == 0) {
+        return(HTML(txt))
+      }
+
+      # Tokenize into alternating tag / plain-text runs. Deliberately not a
+      # strsplit() on a zero-width lookaround pattern: strsplit()'s handling
+      # of zero-width matches in R splits "<b>" into "<" and "b>" instead of
+      # keeping it whole, silently treating every tag as plain text.
+      tagMatches <- gregexpr("<[^>]+>", txt, perl = TRUE)[[1]]
+      if (tagMatches[1] == -1) {
+        tokens <- txt
+        isTag <- FALSE
+      } else {
+        tagLens <- attr(tagMatches, "match.length")
+        tagStarts <- as.integer(tagMatches)
+        tagEnds <- tagStarts + tagLens - 1L
+
+        tokens <- character(0)
+        isTag <- logical(0)
+        cursor <- 1L
+        for (i in seq_along(tagStarts)) {
+          if (tagStarts[i] > cursor) {
+            tokens <- c(tokens, substr(txt, cursor, tagStarts[i] - 1L))
+            isTag <- c(isTag, FALSE)
+          }
+          tokens <- c(tokens, substr(txt, tagStarts[i], tagEnds[i]))
+          isTag <- c(isTag, TRUE)
+          cursor <- tagEnds[i] + 1L
+        }
+        if (cursor <= nchar(txt)) {
+          tokens <- c(tokens, substr(txt, cursor, nchar(txt)))
+          isTag <- c(isTag, FALSE)
+        }
+      }
+      lens <- ifelse(isTag, 0L, nchar(tokens))
+      tokEnd <- cumsum(lens)
+      tokStart <- tokEnd - lens
+
+      # Collect the (local) intervals each highlight touches, per token
+      tokenIntervals <- vector("list", length(tokens))
+
+      rows <- df[order(df$start), ]
+      for (i in seq_len(nrow(rows))) {
+        h <- rows[i, ]
+        color <- if (identical(as.character(h$group_id), as.character(activeGroup))) {
+          "#fff59d"
+        } else {
+          "#e0e0e0"
+        }
+
+        for (j in seq_along(tokens)) {
+          if (isTag[j]) next
+          lo <- max(h$start, tokStart[j])
+          hi <- min(h$end, tokEnd[j])
+          if (lo >= hi) next
+
+          tokenIntervals[[j]] <- rbind(
+            tokenIntervals[[j]],
+            data.frame(lo = lo - tokStart[j], hi = hi - tokStart[j], color = color)
+          )
+        }
+      }
+
+      for (j in seq_along(tokens)) {
+        ivs <- tokenIntervals[[j]]
+        if (is.null(ivs)) next
+        ivs <- ivs[order(ivs$lo), ]
+
+        chunk <- tokens[j]
+        pieces <- character(0)
+        cursor <- 0
+        for (k in seq_len(nrow(ivs))) {
+          pieces <- c(pieces, substr(chunk, cursor + 1, ivs$lo[k]))
+          pieces <- c(pieces, sprintf(
+            '<span style="background-color:%s;">%s</span>',
+            ivs$color[k],
+            substr(chunk, ivs$lo[k] + 1, ivs$hi[k])
+          ))
+          cursor <- ivs$hi[k]
+        }
+        pieces <- c(pieces, substr(chunk, cursor + 1, nchar(chunk)))
+        tokens[j] <- paste(pieces, collapse = "")
+      }
+
+      HTML(paste(tokens, collapse = ""))
+    }
+
+    output$textDisplay <- renderUI({
+      buildHighlightedHtml(text(), state(), cur_group_id())
+    })
+
+    # Clear and rebuild the sidebar list for the currently active group.
+    # Registers a delete-observer for any button id that doesn't have one yet.
+    rebuildSelList <- function() {
+      removeUI(selector = paste0("#", ns("selList"), " > div"), multiple = TRUE)
+
+      rows <- state()[state()$group_id == as.character(cur_group_id()), , drop = FALSE]
+      if (nrow(rows) == 0) {
+        return(invisible())
+      }
+      rows <- rows[order(-rows$id), ]
+
+      for (i in seq_len(nrow(rows))) {
+        rid <- rows$id[i]
+        btnId <- paste0("del", rid)
+
         insertUI(
-          paste0("#", NS(id, "selList")),
-          "afterBegin",
+          paste0("#", ns("selList")),
+          "beforeEnd",
           tags$div(
             actionButton(
-              paste0(NS(id, "selList"), countIds[i], "-del"),
+              ns(btnId),
               label = NULL,
               icon = icon("trash"),
               style = "padding: 3px;"
             ),
-            values[i],
-            id = paste0(NS(id, "selList"), countIds[i])
+            rows$text[i],
+            id = ns(paste0("item", rid))
           )
         )
+
+        if (is.null(deleteObservers[[btnId]])) {
+          local({
+            rid_ <- rid
+            btnId_ <- btnId
+            deleteObservers[[btnId_]] <<- observeEvent(input[[btnId_]], {
+              state(state()[state()$id != rid_, , drop = FALSE])
+            })
+          })
+        }
       }
     }
 
-    observeEvent(
-      c(defaults(), reset()),
-      {
-        n <- length(defaults())
+    # `text` changing fully resets state back to init_vals
+    observeEvent(text(), {
+      for (obs in deleteObservers) obs$destroy()
+      deleteObservers <<- list()
+      counter(0)
 
-        # Remove old UI
-        for (btn in sels()$btn) {
-          removeUI(paste0("#", NS(id, str_remove(btn, "-del"))))
-        }
+      seeded <- seedState()
+      counter(nrow(seeded))
+      state(seeded)
+    })
 
-        # Add to result
-        if (n > 0) {
-          # Add new UI
-          addToList(id, counter() + 1:n, rev(defaults()))
+    # `cur_group_id` changing only affects display: recolor + reload the
+    # (group-filtered) sidebar list, the underlying state is untouched
+    observeEvent(cur_group_id(), {
+      rebuildSelList()
+    }, ignoreInit = TRUE)
 
-          sels(data.frame(
-            id = counter() + 1:n,
-            btn = paste0("selList", counter() + 1:n, "-del"),
-            text = rev(defaults()),
-            new = T
-          ))
-          counter(counter() + n)
-        } else {
-          sels(data.frame(
-            id = integer(),
-            btn = character(),
-            text = character(),
-            new = logical()
-          ))
-        }
-      },
-      ignoreNULL = F
-    )
+    # Any state change (add/remove/reset) refreshes the sidebar list
+    observeEvent(state(), {
+      rebuildSelList()
+    }, ignoreInit = TRUE)
 
-    # When the add button is clicked add highighted text to the list
+    # Add the current selection as a new highlight for the active group
     observeEvent(input$addSel, {
-      if (input$highlighted_text == "") {
-        showModal(modalDialog(
-          title = "Selection issue",
-          "You must select text from the expected area to proceed"
+      sel <- input$selInfo
+      req(sel, sel$end > sel$start)
+
+      overlaps <- state() |>
+        filter(start < sel$end, end > sel$start) |>
+        nrow() > 0
+
+      if (overlaps) {
+        showNotification(
+          "This selection overlaps with an existing highlight and cannot be added.",
+          type = "warning"
+        )
+      } else {
+        counter(counter() + 1)
+        state(bind_rows(
+          state(),
+          data.frame(
+            id = counter(),
+            group_id = as.character(cur_group_id()),
+            start = as.integer(sel$start),
+            end = as.integer(sel$end),
+            text = sel$text,
+            stringsAsFactors = FALSE
+          )
         ))
       }
-
-      req(input$highlighted_text != "")
-
-      counter(counter() + 1)
-
-      # Add to the UI lsit
-      . <- addToList(id, counter(), input$highlighted_text)
-
-      # Update the resulting dataframe
-      sels(rbind(
-        sels(),
-        data.frame(
-          id = counter(),
-          btn = paste0("selList", counter(), "-del"),
-          text = input$highlighted_text,
-          new = T
-        )
-      ))
     })
 
-    # Dynamically add observations for delete buttons
-    observe({
-      n <- length(sels()$new == T)
-      req(n > 0)
-      toUpdate <- sels() |> filter(new)
-      lapply(toUpdate$btn, function(btn) {
-        # Use local() to capture loop variable correctly
-        local({
-          observeEvent(input[[btn]], {
-            sels(sels()[sels()$btn != btn, ])
-            removeUI(paste0("#", NS(id, str_remove(btn, "-del"))))
-          })
-        })
-      })
-      sels(sels() |> mutate(new = F))
-    })
-
-    # Return the data frame with seved highlights
-    return({
-      reactive({
-        df <- sels()
-
-        if (nrow(df) > 0) {
-          df <- df |>
-            arrange(desc(id)) |>
-            mutate(id = 1:n(), text = text, .keep = "none")
-        }
-      })
-    })
+    # Return the full data frame of saved highlights, across all groups
+    return(reactive({
+      state()
+    }))
   })
 }

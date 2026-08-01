@@ -4,18 +4,29 @@
 \alias{mod_highlight_server}
 \title{Module server for text highlights}
 \usage{
-mod_highlight_server(id, defaults, reset = reactiveVal())
+mod_highlight_server(id, text, cur_group_id, init_vals)
 }
 \arguments{
 \item{id}{Module ID}
 
-\item{defaults}{A (reactive) vector of default list options}
+\item{text}{A (reactive) character string with the source text to render,
+in HTML format. Changing this fully resets the module's state back to
+\code{init_vals()}.}
 
-\item{reset}{An optional reactive variable that will rest to the defaults when triggered}
+\item{cur_group_id}{A (reactive) value with the currently active group ID.
+Highlights belonging to this group are shown in yellow, all others in
+light gray. Changing this does not reset the state, only the display.}
+
+\item{init_vals}{A (reactive) data frame with the initial highlights to
+seed the state with whenever \code{text} changes. Expected columns are
+\code{group_id}, \code{start}, \code{end} and \code{text}; \code{start}/\code{end} must use the same
+plain-text (tag-stripped), zero-indexed, half-open coordinate system that
+the module itself uses internally. Any \code{id} column is ignored - fresh
+internal ids are always assigned on seed.}
 }
 \value{
-A reactive data frame with selected pieces of text and an ID in the
-order they were listed on the page
+A reactive data frame with columns \code{id}, \code{group_id}, \code{start},
+\code{end} and \code{text}, holding all saved highlights across all groups.
 }
 \description{
 Module server for text highlights

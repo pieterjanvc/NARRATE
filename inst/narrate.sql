@@ -260,6 +260,8 @@ CREATE TABLE "competency_text" (
   "id" INTEGER PRIMARY KEY AUTOINCREMENT,
   "competency_score_id" INTEGER NOT NULL,
   "text_match" TEXT NOT NULL,
+  "start" INTEGER,
+  "end" INTEGER,
   FOREIGN KEY ("competency_score_id") REFERENCES "competency_score"("id") ON DELETE CASCADE
 );
 

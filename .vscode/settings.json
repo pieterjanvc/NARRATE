@@ -7,5 +7,7 @@
   "positron.viewer.openLocalhostUrls": false,
 
   // If you use Shiny for Python, this setting takes precedence
-  "shiny.previewType": "external"
+  "shiny.previewType": "external",
+
+  "claudeCode.useCtrlEnterToSend": true
 }

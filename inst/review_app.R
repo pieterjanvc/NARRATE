@@ -8,8 +8,8 @@ library(DT)
 library(sqlife)
 
 
-dbInfo <- "../local/narrate.db"
-# dbInfo <- "../local/narrate_new.db"
+# dbInfo <- "../local/narrate.db"
+dbInfo <- "../local/test.db"
 # dbInfo <- "~/Downloads/narrate.db"
 
 # This is the db used during deployment, see deployShinyApp()
@@ -93,28 +93,20 @@ ui <- page_fluid(
 
       layout_columns(
         card(
-          card_header(
-            div(
-              "Student evaluation",
-              checkboxInput(
-                "showQuestions",
-                "Show questions",
-                value = T,
-                width = "auto"
-              ),
-              class = "d-flex gap-3"
-            )
-          ),
-          uiOutput("evaluation")
+          card_header("Student evaluation"),
+          div(
+            mod_highlight_ui_text("highlights"),
+            style = "max-height: 70vh; overflow-y: auto;"
+          )
         ),
         navset_card_tab(
           nav_panel(
             title = div(" Competencies", id = "compTitle"),
             selectInput("cID", "Competency", choices = NULL, width = "100%"),
             uiOutput("compDescr"),
-            mod_highlight_ui(
+            mod_highlight_ui_controls(
               "highlights",
-              "evaluation",
+              NS("highlights", "textDisplay"),
               "Text evidence (required)"
             ),
             radioButtons(
@@ -386,13 +378,58 @@ server <- function(input, output, session) {
 
   reviewScores <- reactiveVal()
 
+  # The evaluation text the highlight module renders and matches offsets
+  # against - questions are always included so start/end stay meaningful
+  evalText <- reactive({
+    req(input$reviewID)
+    evalID <- tbl(conn, "review_assignment") |>
+      filter(id == as.integer(input$reviewID)) |>
+      pull(evaluation_id)
+
+    dbGetEvals(
+      ids = evalID,
+      conn = conn,
+      redacted = T,
+      includeQuestions = T,
+      html = T,
+      subtitleTag = "b"
+    ) |>
+      pull(evaluation)
+  })
+
+  # Previously saved highlights (all competencies) for the current review,
+  # used to seed the highlight module whenever evalText() changes
+  highlightInitVals <- reactive({
+    req(input$reviewID)
+    reviewID <- as.integer(input$reviewID)
+
+    compScores <- tbl(conn, "competency_score") |>
+      filter(review_assignment_id == reviewID) |>
+      select(id, competency_id) |>
+      collect()
+
+    tbl(conn, "competency_text") |>
+      filter(competency_score_id %in% local(compScores$id)) |>
+      collect() |>
+      left_join(
+        compScores |> select(competency_score_id = id, competency_id),
+        by = "competency_score_id"
+      ) |>
+      filter(!is.na(start), !is.na(end)) |>
+      transmute(
+        group_id = as.character(competency_id),
+        start = as.integer(start),
+        end = as.integer(end),
+        text = text_match
+      )
+  })
+
   # Highlight selection module
-  defaultEvidence <- reactiveVal(c())
-  resetSel <- reactiveVal()
   txtEvidence <- mod_highlight_server(
     "highlights",
-    defaults = defaultEvidence,
-    reset = resetSel
+    text = evalText,
+    cur_group_id = reactive(input$cID),
+    init_vals = highlightInitVals
   )
 
   # Populate reviewers
@@ -646,13 +683,6 @@ server <- function(input, output, session) {
     compScores <- reviewScores()$compScores |>
       filter(competency_id == as.integer(input$cID))
 
-    compText <- reviewScores()$compText |>
-      filter(competency_score_id %in% compScores$id)
-
-    # Update all competency scoring values
-    defaultEvidence(compText$text_match)
-    resetSel(Sys.time())
-
     updateRadioButtons(
       inputId = "specificity",
       selected = if (nrow(compScores) == 0) {
@@ -686,32 +716,11 @@ server <- function(input, output, session) {
     tagList(tags$i(if (length(desc) == 1) desc else ""))
   })
 
-  # The UI that shows the evaluation
-  output$evaluation <- renderUI({
-    req(input$reviewID)
-    evalID <- tbl(conn, "review_assignment") |>
-      filter(id == as.integer(input$reviewID)) |>
-      pull(evaluation_id)
-
-    div(
-      HTML(
-        dbGetEvals(
-          ids = evalID,
-          conn = conn,
-          redacted = T,
-          includeQuestions = input$showQuestions,
-          html = T,
-          subtitleTag = "b"
-        ) |>
-          pull(evaluation)
-      ),
-      style = "max-height: 70vh; overflow-y: auto;"
-    )
-  })
-
   # Add or update a competency review
   observeEvent(input$addComp, {
-    evidence <- str_trim(txtEvidence()$text)
+    groupEvidence <- txtEvidence() |>
+      filter(group_id == as.character(input$cID))
+    evidence <- str_trim(groupEvidence$text)
     if (length(evidence) == 0) {
       showModal(modalDialog(
         HTML(
@@ -744,7 +753,9 @@ server <- function(input, output, session) {
     compText <- data.frame(
       review_assignment_id = as.integer(input$reviewID),
       competency_id = as.integer(input$cID),
-      text_match = evidence
+      text_match = evidence,
+      start = groupEvidence$start,
+      end = groupEvidence$end
     )
 
     scores <- dbReviewUpdate(

@@ -510,7 +510,7 @@ dbReviewUpdate <- function(
         select(competency_score_id = id, review_assignment_id, competency_id),
       by = c("review_assignment_id", "competency_id")
     ) |>
-    select(competency_score_id, text_match)
+    select(competency_score_id, text_match, start, end)
   tbl_insert(compText, conn, "competency_text", commit = commit)
 
   # Return all scores for this review, not just the newly inserted row
@@ -785,9 +785,11 @@ dbCompExtraction <- function(
   }
 
   # Resolve cIndex (order position) → competency_id via rubric_competency
-  rubric_id <- tbl(conn, "review_assignment") |>
+  ra_info <- tbl(conn, "review_assignment") |>
     filter(id == local(ra_id)) |>
-    pull(rubric_id)
+    select(rubric_id, evaluation_id, redacted) |>
+    collect()
+  rubric_id <- ra_info$rubric_id
 
   order_map <- tbl(conn, "rubric_competency") |>
     filter(rubric_id == local(rubric_id)) |>
@@ -838,12 +840,38 @@ dbCompExtraction <- function(
     filter(review_assignment_id == local(ra_id)) |>
     collect()
 
+  # Plain text (tag-stripped) the extracted quotes are matched against, in the
+  # same coordinate space mod_highlight_server renders highlights against
+  plainText <- dbGetEvals(
+    ids = ra_info$evaluation_id,
+    conn = conn,
+    redacted = if (is.na(ra_info$redacted)) TRUE else as.logical(ra_info$redacted),
+    includeQuestions = TRUE,
+    html = TRUE,
+    subtitleTag = "b"
+  ) |>
+    pull(evaluation) |>
+    mod_highlight_strip_tags()
+
+  # Locate every extracted quote up front (not per-competency) so matches
+  # claim non-overlapping ranges across the whole review, not just within
+  # their own competency
+  all_texts <- unlist(lapply(comp_extraction, "[[", "text"), use.names = FALSE)
+  all_pos <- if (length(all_texts) > 0) {
+    mod_highlight_locate(plainText, all_texts)
+  } else {
+    data.frame(start = integer(0), end = integer(0))
+  }
+
   # --- competency_text: delete existing and insert new for each extracted item
   all_text_new <- list()
+  posCursor <- 0L
 
   for (item in comp_extraction) {
     comp_id <- order_map$competency_id[order_map$comp_order == item$cIndex]
     texts <- item$text
+    item_pos <- all_pos[posCursor + seq_along(texts), , drop = FALSE]
+    posCursor <- posCursor + length(texts)
 
     score_id <- all_scores |>
       filter(competency_id == local(comp_id)) |>
@@ -866,7 +894,9 @@ dbCompExtraction <- function(
       new_text <- tbl_insert(
         data.frame(
           competency_score_id = score_id,
-          text_match = texts
+          text_match = texts,
+          start = item_pos$start,
+          end = item_pos$end
         ),
         conn,
         "competency_text",
