@@ -102,16 +102,21 @@ ui <- page_fluid(
         navset_card_tab(
           nav_panel(
             title = div(" Competencies", id = "compTitle"),
-            selectInput("cID", "Competency", choices = NULL, width = "100%"),
-            uiOutput("compDescr"),
             mod_highlight_ui_controls(
               "highlights",
               NS("highlights", "textDisplay"),
-              "Text evidence (required)"
+              "1. Highlight text evidence"
             ),
             radioButtons(
+              "cID",
+              "2. Pick best fitting competency",
+              choices = c("A"),
+              width = "100%"
+            ),
+            uiOutput("compDescr"),
+            radioButtons(
               "specificity",
-              "Specificity score",
+              "3. Select specificity score",
               choices = c(1:3),
               inline = T
             ),
@@ -610,9 +615,10 @@ server <- function(input, output, session) {
       tabStatusIcon("submit", submitStatus, session = session)
 
       # Competency list (from competency table)
-      updateSelectInput(
+      updateRadioButtons(
         inputId = "cID",
-        choices = setNames(competencies_db$competency_id, competencies_db$name)
+        choiceNames = competencies_db$name,
+        choiceValues = competencies_db$competency_id
       )
 
       # Specificity score options — loaded from the rubric attached to this review
