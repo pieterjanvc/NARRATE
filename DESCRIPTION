@@ -11,6 +11,7 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Suggests:
   renv,
+  chromote,
   devtools,
   roxygen2,
   packrat,

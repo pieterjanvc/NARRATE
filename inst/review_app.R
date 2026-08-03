@@ -110,7 +110,7 @@ ui <- page_fluid(
             radioButtons(
               "cID",
               "2. Pick best fitting competency",
-              choices = c("A"),
+              choices = c("Loading ..."),
               width = "100%"
             ),
             uiOutput("compDescr"),
@@ -402,9 +402,20 @@ server <- function(input, output, session) {
       pull(evaluation)
   })
 
+  # Bumped after a successful competency commit to force the highlight module
+  # to fully reseed from `highlightInitVals()` (i.e. from the database),
+  # so a just-committed staged highlight is reflected as committed and isn't
+  # accidentally re-committed under a different competency later. Kept
+  # separate from `forceRefresh()` below, which also fires for unrelated
+  # updates (overall scores, AI review) that shouldn't wipe staged highlights.
+  highlightRefreshTrigger <- reactiveVal(0)
+
   # Previously saved highlights (all competencies) for the current review,
-  # used to seed the highlight module whenever evalText() changes
+  # used to seed the highlight module whenever evalText() changes. Also
+  # depends on highlightRefreshTrigger() so a post-commit reseed re-queries
+  # the database instead of reusing a stale cached value.
   highlightInitVals <- reactive({
+    highlightRefreshTrigger()
     req(input$reviewID)
     reviewID <- as.integer(input$reviewID)
 
@@ -432,7 +443,10 @@ server <- function(input, output, session) {
   # Highlight selection module
   txtEvidence <- mod_highlight_server(
     "highlights",
-    text = evalText,
+    text = reactive({
+      highlightRefreshTrigger()
+      evalText()
+    }),
     cur_group_id = reactive(input$cID),
     init_vals = highlightInitVals
   )
@@ -577,10 +591,16 @@ server <- function(input, output, session) {
 
   # Reload UI when review selection changes or after a forced refresh
   forceRefresh <- reactiveVal(0)
+  # Tracks the last reviewID this block ran for, so it can tell a genuine
+  # review switch (reset cID to the first competency) apart from a
+  # same-review forceRefresh (e.g. after addComp - keep cID as-is).
+  lastReviewID <- reactiveVal(NA_integer_)
   observeEvent(
     c(input$reviewID, forceRefresh()),
     {
       reviewID <- as.integer(input$reviewID)
+      isNewReview <- !identical(reviewID, lastReviewID())
+      lastReviewID(reviewID)
 
       # Get any previous scores
       review_assingment <- tbl(conn, "review_assignment") |>
@@ -614,11 +634,22 @@ server <- function(input, output, session) {
       tabStatusIcon("overall", overallStatus, session = session)
       tabStatusIcon("submit", submitStatus, session = session)
 
-      # Competency list (from competency table)
+      # Competency list (from competency table). On a genuine review switch,
+      # reset to the first competency as before; on a same-review
+      # forceRefresh (e.g. after addComp) keep whatever was selected.
       updateRadioButtons(
         inputId = "cID",
         choiceNames = competencies_db$name,
-        choiceValues = competencies_db$competency_id
+        choiceValues = competencies_db$competency_id,
+        selected = if (
+          !isNewReview &&
+            !is.null(input$cID) &&
+            input$cID %in% as.character(competencies_db$competency_id)
+        ) {
+          input$cID
+        } else {
+          NULL
+        }
       )
 
       # Specificity score options — loaded from the rubric attached to this review
@@ -689,15 +720,6 @@ server <- function(input, output, session) {
     compScores <- reviewScores()$compScores |>
       filter(competency_id == as.integer(input$cID))
 
-    updateRadioButtons(
-      inputId = "specificity",
-      selected = if (nrow(compScores) == 0) {
-        character(0)
-      } else {
-        compScores$specificity
-      }
-    )
-
     updateTextAreaInput(
       input = "competencyComment",
       value = ifelse(nrow(compScores) == 0, "", compScores$note)
@@ -724,8 +746,23 @@ server <- function(input, output, session) {
 
   # Add or update a competency review
   observeEvent(input$addComp, {
+    if (is.null(input$cID) || is.null(input$specificity)) {
+      showNotification(
+        "Please select a competency and a specificity score before saving.",
+        type = "warning"
+      )
+      return(invisible())
+    }
+
+    # Staged highlights are committed to the currently selected competency;
+    # already-committed highlights for this competency are carried over as-is
+    # (any that were deleted in the module simply won't be in this set, and
+    # dbReviewUpdate()'s delete-then-reinsert below removes them from the DB).
     groupEvidence <- txtEvidence() |>
-      filter(group_id == as.character(input$cID))
+      filter(
+        status == "staged" |
+          (status == "committed" & group_id == as.character(input$cID))
+      )
     evidence <- str_trim(groupEvidence$text)
     if (length(evidence) == 0) {
       showModal(modalDialog(
@@ -738,15 +775,6 @@ server <- function(input, output, session) {
     }
 
     req(length(evidence) > 0)
-
-    if (is.null(input$specificity)) {
-      showModal(modalDialog(
-        HTML("Please make sure to select a specificity score"),
-        title = "Text evidence missing"
-      ))
-    }
-
-    req(input$specificity)
 
     comment <- str_trim(input$competencyComment)
     compScores <- data.frame(
@@ -782,8 +810,36 @@ server <- function(input, output, session) {
     tabStatusIcon("comp", 1, session = session)
     tabStatusIcon("submit", 1, session = session)
     forceRefresh(forceRefresh() + 1)
+    highlightRefreshTrigger(highlightRefreshTrigger() + 1)
     showNotification(sprintf("Competency updated"), type = "message")
   })
+
+  # Keep the specificity selector in sync with the competency, the review,
+  # and the highlight evidence itself. If there's any evidence currently
+  # staged (not yet committed to a competency), force a reselect - an
+  # existing saved score wasn't chosen against that pending evidence. With
+  # nothing staged, restore the previously saved score for the current
+  # competency, if any.
+  observeEvent(
+    list(input$cID, input$reviewID, txtEvidence()),
+    {
+      req(reviewScores())
+      compScores <- reviewScores()$compScores |>
+        filter(competency_id == as.integer(input$cID))
+
+      hasStaged <- any(txtEvidence()$status == "staged")
+
+      updateRadioButtons(
+        inputId = "specificity",
+        selected = if (hasStaged || nrow(compScores) == 0) {
+          character(0)
+        } else {
+          compScores$specificity
+        }
+      )
+    },
+    ignoreInit = TRUE
+  )
 
   # Add or update the overall scores
   observeEvent(input$addOverall, {

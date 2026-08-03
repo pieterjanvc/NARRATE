@@ -1,11 +1,12 @@
 #' Module UI for text highlight controls
 #'
-#' UI has (top to bottom): a staging area listing not-yet-saved selections, a
-#' "Stage" / "Discard" button pair to add the current text selection to that
-#' staging area or drop it, a compact list of selections already saved to the
-#' currently active group, and an "Add staged to selected competency" button
-#' that commits the staging area to that group. Both lists let individual
-#' entries be removed again.
+#' UI has (top to bottom): a staging area listing not-yet-committed
+#' selections, a "Stage" / "Discard" button pair to add the current text
+#' selection to that staging area or drop it, and a compact list of
+#' selections already committed to the currently active group. Both lists
+#' let individual entries be removed again. Committing staged selections to
+#' a group happens outside this module - see the `status` column on
+#' [mod_highlight_server()]'s return value.
 #'
 #' Must be paired with a [mod_highlight_ui_text()] call using the *same*
 #' module `id`, and both wired up to a single [mod_highlight_server()] call
@@ -28,13 +29,13 @@ mod_highlight_ui_controls <- function(
   label = "Text evidence",
   info = paste(
     "<i>Select pieces of text and click 'Stage' to add them to the list",
-    "above, then click 'Add staged to selected competency' to assign the",
-    "staged selections to the current group</i>"
+    "below. Staged selections are highlighted in orange and remain pending until",
+    "all changes are saved.</i>"
   )
 ) {
   # When no element is set '' JS wil choose the body as default
   if (missing(element)) {
-    element = ""
+    element <- ""
   }
 
   ns <- NS(id)
@@ -63,14 +64,25 @@ mod_highlight_ui_controls <- function(
     ))),
     tags$label(label, class = "control-label"),
     HTML(info),
+    tags$label("Staged highlights", class = "control-label"),
     div(id = ns("stagedList")),
     fluidRow(
-      column(6, actionButton(ns("addSel"), "Stage", width = "100%")),
-      column(6, actionButton(ns("discardStaged"), "Discard", width = "100%"))
+      column(
+        6,
+        actionButton(ns("addSel"), "Stage selected text", width = "100%")
+      ),
+      column(
+        6,
+        actionButton(
+          ns("discardStaged"),
+          "Discard all staged text",
+          width = "100%"
+        )
+      )
     ),
     tags$hr(),
-    div(id = ns("selList")),
-    actionButton(ns("saveStaged"), "Add staged to selected competency", width = "100%")
+    tags$label("Previous highlights", class = "control-label"),
+    div(id = ns("selList"))
   )
 }
 
@@ -176,10 +188,14 @@ mod_highlight_locate <- function(plainText, matches) {
 
   for (i in seq_along(matches)) {
     m <- matches[i]
-    if (is.na(m) || !nzchar(m)) next
+    if (is.na(m) || !nzchar(m)) {
+      next
+    }
 
     pos <- gregexpr(m, plainText, fixed = TRUE)[[1]]
-    if (pos[1] == -1) next
+    if (pos[1] == -1) {
+      next
+    }
     lens <- attr(pos, "match.length")
 
     chosen <- NULL
@@ -192,7 +208,9 @@ mod_highlight_locate <- function(plainText, matches) {
         break
       }
     }
-    if (is.null(chosen)) next
+    if (is.null(chosen)) {
+      next
+    }
 
     starts[i] <- chosen[1]
     ends[i] <- chosen[2]
@@ -221,13 +239,18 @@ mod_highlight_locate <- function(plainText, matches) {
 #' `group_id`, `start`, `end` and `text`; `start`/`end` must use the same
 #' plain-text (tag-stripped), zero-indexed, half-open coordinate system that
 #' the module itself uses internally. Any `id` column is ignored - fresh
-#' internal ids are always assigned on seed.
+#' internal ids are always assigned on seed. An optional `status` column
+#' ("staged" or "committed") pre-populates the staging area: rows with
+#' `status == "staged"` seed as staged (with `group_id` forced to `NA`,
+#' regardless of what's supplied), everything else seeds as committed. If
+#' `status` is absent, all rows are assumed already committed.
 #'
 #' @import shiny dplyr
 #'
 #' @returns A reactive data frame with columns `id`, `group_id`, `start`,
-#' `end` and `text`, holding all *saved* highlights across all groups.
-#' Staged (not yet saved) highlights are never included here.
+#' `end`, `text` and `status`. Includes both committed highlights (across all
+#' groups) and staged (not yet committed) highlights; `status` is
+#' "committed" or "staged", and `group_id` is `NA` for staged rows.
 #'
 #' @export
 #'
@@ -275,23 +298,46 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
     }
 
     state <- reactiveVal(emptyState())
-    # Highlights that have been selected + "Added" but not yet assigned to a
-    # group. Only "Save new highlights" moves rows from here into `state()`.
+    # Highlights that have been staged but not yet committed to a group.
+    # Rows only leave here via individual delete, "Discard", or a full
+    # reseed from init_vals - there is no internal action that promotes a
+    # staged row into `state()` (committing happens outside this module).
     staged <- reactiveVal(emptyStagedState())
 
-    # Build a fresh state data frame from init_vals, ignoring any incoming id
-    seedState <- function() {
+    # Build fresh state + staged data frames from init_vals, ignoring any
+    # incoming id - fresh internal ids are always assigned on seed. Rows are
+    # split by the optional `status` column: "staged" rows seed into
+    # `staged` (with group_id forced to NA), everything else (including a
+    # missing `status` column entirely) seeds into `state` as committed.
+    seedFromInitVals <- function() {
       iv <- init_vals()
       if (is.null(iv) || nrow(iv) == 0) {
-        return(emptyState())
+        return(list(state = emptyState(), staged = emptyStagedState()))
       }
-      data.frame(
-        id = seq_len(nrow(iv)),
-        group_id = as.character(iv$group_id),
-        start = as.integer(iv$start),
-        end = as.integer(iv$end),
-        text = as.character(iv$text),
-        stringsAsFactors = FALSE
+
+      isStaged <- if (is.null(iv$status)) {
+        rep(FALSE, nrow(iv))
+      } else {
+        as.character(iv$status) == "staged"
+      }
+      ids <- seq_len(nrow(iv))
+
+      list(
+        state = data.frame(
+          id = ids[!isStaged],
+          group_id = as.character(iv$group_id)[!isStaged],
+          start = as.integer(iv$start)[!isStaged],
+          end = as.integer(iv$end)[!isStaged],
+          text = as.character(iv$text)[!isStaged],
+          stringsAsFactors = FALSE
+        ),
+        staged = data.frame(
+          id = ids[isStaged],
+          start = as.integer(iv$start)[isStaged],
+          end = as.integer(iv$end)[isStaged],
+          text = as.character(iv$text)[isStaged],
+          stringsAsFactors = FALSE
+        )
       )
     }
 
@@ -351,21 +397,31 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
         color <- h$color
 
         for (j in seq_along(tokens)) {
-          if (isTag[j]) next
+          if (isTag[j]) {
+            next
+          }
           lo <- max(h$start, tokStart[j])
           hi <- min(h$end, tokEnd[j])
-          if (lo >= hi) next
+          if (lo >= hi) {
+            next
+          }
 
           tokenIntervals[[j]] <- rbind(
             tokenIntervals[[j]],
-            data.frame(lo = lo - tokStart[j], hi = hi - tokStart[j], color = color)
+            data.frame(
+              lo = lo - tokStart[j],
+              hi = hi - tokStart[j],
+              color = color
+            )
           )
         }
       }
 
       for (j in seq_along(tokens)) {
         ivs <- tokenIntervals[[j]]
-        if (is.null(ivs)) next
+        if (is.null(ivs)) {
+          next
+        }
         ivs <- ivs[order(ivs$lo), ]
 
         chunk <- tokens[j]
@@ -373,11 +429,14 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
         cursor <- 0
         for (k in seq_len(nrow(ivs))) {
           pieces <- c(pieces, substr(chunk, cursor + 1, ivs$lo[k]))
-          pieces <- c(pieces, sprintf(
-            '<span style="background-color:%s;">%s</span>',
-            ivs$color[k],
-            substr(chunk, ivs$lo[k] + 1, ivs$hi[k])
-          ))
+          pieces <- c(
+            pieces,
+            sprintf(
+              '<span style="background-color:%s;">%s</span>',
+              ivs$color[k],
+              substr(chunk, ivs$lo[k] + 1, ivs$hi[k])
+            )
+          )
           cursor <- ivs$hi[k]
         }
         pieces <- c(pieces, substr(chunk, cursor + 1, nchar(chunk)))
@@ -411,7 +470,11 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
     rebuildSelList <- function() {
       removeUI(selector = paste0("#", ns("selList"), " > div"), multiple = TRUE)
 
-      rows <- state()[state()$group_id == as.character(cur_group_id()), , drop = FALSE]
+      rows <- state()[
+        state()$group_id == as.character(cur_group_id()),
+        ,
+        drop = FALSE
+      ]
       if (nrow(rows) == 0) {
         return(invisible())
       }
@@ -431,7 +494,7 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
               icon = icon("trash"),
               style = "padding: 3px;"
             ),
-            rows$text[i],
+            tags$span(rows$text[i], style = "color:#0d6efd;"),
             id = ns(paste0("item", rid))
           )
         )
@@ -453,7 +516,10 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
     # highlights don't belong to a group yet, so the staging area stays put
     # while the user switches groups underneath it.
     rebuildStagedList <- function() {
-      removeUI(selector = paste0("#", ns("stagedList"), " > div"), multiple = TRUE)
+      removeUI(
+        selector = paste0("#", ns("stagedList"), " > div"),
+        multiple = TRUE
+      )
 
       rows <- staged()
       if (nrow(rows) == 0) {
@@ -475,7 +541,7 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
               icon = icon("trash"),
               style = "padding: 3px;"
             ),
-            rows$text[i],
+            tags$span(rows$text[i], style = "color:#0d6efd;"),
             id = ns(paste0("stagedItem", rid))
           )
         )
@@ -494,16 +560,19 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
 
     # `text` changing fully resets state (and staging) back to init_vals
     observeEvent(text(), {
-      for (obs in deleteObservers) obs$destroy()
+      for (obs in deleteObservers) {
+        obs$destroy()
+      }
       deleteObservers <<- list()
-      for (obs in stagedDeleteObservers) obs$destroy()
+      for (obs in stagedDeleteObservers) {
+        obs$destroy()
+      }
       stagedDeleteObservers <<- list()
-      counter(0)
 
-      seeded <- seedState()
-      counter(nrow(seeded))
-      state(seeded)
-      staged(emptyStagedState())
+      seeded <- seedFromInitVals()
+      counter(nrow(seeded$state) + nrow(seeded$staged))
+      state(seeded$state)
+      staged(seeded$staged)
 
       # Rebuild both lists explicitly rather than relying on the state()/
       # staged() watchers below: those use ignoreInit = TRUE, and their very
@@ -517,19 +586,31 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
 
     # `cur_group_id` changing only affects display: recolor + reload the
     # (group-filtered) sidebar list, the underlying state is untouched
-    observeEvent(cur_group_id(), {
-      rebuildSelList()
-    }, ignoreInit = TRUE)
+    observeEvent(
+      cur_group_id(),
+      {
+        rebuildSelList()
+      },
+      ignoreInit = TRUE
+    )
 
     # Any state change (add/remove/reset) refreshes the sidebar list
-    observeEvent(state(), {
-      rebuildSelList()
-    }, ignoreInit = TRUE)
+    observeEvent(
+      state(),
+      {
+        rebuildSelList()
+      },
+      ignoreInit = TRUE
+    )
 
-    # Any staged change (add/remove/save/discard) refreshes the staging list
-    observeEvent(staged(), {
-      rebuildStagedList()
-    }, ignoreInit = TRUE)
+    # Any staged change (add/remove/discard) refreshes the staging list
+    observeEvent(
+      staged(),
+      {
+        rebuildStagedList()
+      },
+      ignoreInit = TRUE
+    )
 
     # Add the current selection to the staging area (not yet assigned to a group)
     observeEvent(input$addSel, {
@@ -538,7 +619,8 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
 
       overlaps <- bind_rows(state(), staged()) |>
         filter(start < sel$end, end > sel$start) |>
-        nrow() > 0
+        nrow() >
+        0
 
       if (overlaps) {
         showNotification(
@@ -560,29 +642,26 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
       }
     })
 
-    # Commit all staged highlights to the currently active group
-    observeEvent(input$saveStaged, {
-      if (nrow(staged()) == 0) {
-        showNotification("No new highlights to save")
-        return(invisible())
-      }
-      req(cur_group_id())
-
-      toSave <- staged()
-      toSave$group_id <- as.character(cur_group_id())
-
-      state(bind_rows(state(), toSave[, c("id", "group_id", "start", "end", "text")]))
-      staged(emptyStagedState())
-    })
-
     # Discard all staged (unsaved) highlights without assigning them to a group
     observeEvent(input$discardStaged, {
       staged(emptyStagedState())
     })
 
-    # Return the full data frame of saved highlights, across all groups
+    # Return the full data frame of highlights, both committed (assigned to a
+    # group) and staged (not yet assigned). `status` distinguishes the two;
+    # `group_id` is always NA for staged rows.
     return(reactive({
-      state()
+      committed <- state()
+      committed$status <- rep("committed", nrow(committed))
+
+      stagedRows <- staged()
+      stagedRows$group_id <- rep(NA_character_, nrow(stagedRows))
+      stagedRows$status <- rep("staged", nrow(stagedRows))
+
+      bind_rows(
+        committed[, c("id", "group_id", "start", "end", "text", "status")],
+        stagedRows[, c("id", "group_id", "start", "end", "text", "status")]
+      )
     }))
   })
 }
