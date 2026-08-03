@@ -8,8 +8,9 @@ mod_highlight_ui_controls(
   id,
   element,
   label = "Text evidence",
-  info =
-    "<i>Select pieces of text and click the 'Add highlighted' button to add them to the list below</i>"
+  info = paste("<i>Select pieces of text and click 'Stage' to add them to the list",
+    "above, then click 'Add staged to selected competency' to assign the",
+    "staged selections to the current group</i>")
 )
 }
 \arguments{
@@ -26,9 +27,12 @@ and its children (don't provide the #)}
 Shiny UI element
 }
 \description{
-UI has a button with underneath a compact element where a list of selected
-peices of text (belonging to the currently active group) are displayed and
-can be removed again.
+UI has (top to bottom): a staging area listing not-yet-saved selections, a
+"Stage" / "Discard" button pair to add the current text selection to that
+staging area or drop it, a compact list of selections already saved to the
+currently active group, and an "Add staged to selected competency" button
+that commits the staging area to that group. Both lists let individual
+entries be removed again.
 }
 \details{
 Must be paired with a \code{\link[=mod_highlight_ui_text]{mod_highlight_ui_text()}} call using the \emph{same}

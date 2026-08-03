@@ -11,11 +11,15 @@ mod_highlight_server(id, text, cur_group_id, init_vals)
 
 \item{text}{A (reactive) character string with the source text to render,
 in HTML format. Changing this fully resets the module's state back to
-\code{init_vals()}.}
+\code{init_vals()}, discarding any staged (unsaved) highlights.}
 
 \item{cur_group_id}{A (reactive) value with the currently active group ID.
-Highlights belonging to this group are shown in yellow, all others in
-light gray. Changing this does not reset the state, only the display.}
+Highlights already saved to this group are shown in yellow, highlights
+saved to other groups in light gray, and staged (not yet saved to any
+group) highlights in light orange. Changing this does not reset the state,
+only the display: it re-filters the saved-highlights list to the newly
+active group. The staging area is independent of \code{cur_group_id} and is
+unaffected by it.}
 
 \item{init_vals}{A (reactive) data frame with the initial highlights to
 seed the state with whenever \code{text} changes. Expected columns are
@@ -26,7 +30,8 @@ internal ids are always assigned on seed.}
 }
 \value{
 A reactive data frame with columns \code{id}, \code{group_id}, \code{start},
-\code{end} and \code{text}, holding all saved highlights across all groups.
+\code{end} and \code{text}, holding all \emph{saved} highlights across all groups.
+Staged (not yet saved) highlights are never included here.
 }
 \description{
 Module server for text highlights
