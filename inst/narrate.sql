@@ -324,7 +324,8 @@ sciences and apply this knowledge in care of individuals and populations.
 focused or comprehensive physical examination, using information from the
 patient and other relevant sources.
 '),
-  (3, 3, 'Communicate clinical information effectively, efficiently, and professionally in
+  (3, 3, 'Provide Effective Oral and Written Professional Communication',
+    'Communicate clinical information effectively, efficiently, and professionally in
 oral and written formats, including concise patient presentations on rounds and
 well-organized clinical documentation such as initial histories and physicals
 and daily progress notes to support patient care.
