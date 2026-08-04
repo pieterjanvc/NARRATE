@@ -1,5 +1,6 @@
 # https://rstudio.github.io/bslib/articles/cards/index.html
 library(shiny)
+library(shinyjs)
 library(bslib)
 library(dplyr)
 library(stringr)
@@ -8,8 +9,8 @@ library(DT)
 library(sqlife)
 
 
-dbInfo <- "../local/narrate.db"
-# dbInfo <- "../local/narrate_new.db"
+# dbInfo <- "../local/narrate.db"
+dbInfo <- "../local/test.db"
 # dbInfo <- "~/Downloads/narrate.db"
 
 # This is the db used during deployment, see deployShinyApp()
@@ -38,6 +39,7 @@ tabStatusIcon <- function(name, status, session) {
 }
 
 ui <- page_fluid(
+  useShinyjs(),
   theme = bs_theme(preset = "journal"),
   tags$style(HTML(
     "
@@ -93,33 +95,30 @@ ui <- page_fluid(
 
       layout_columns(
         card(
-          card_header(
-            div(
-              "Student evaluation",
-              checkboxInput(
-                "showQuestions",
-                "Show questions",
-                value = T,
-                width = "auto"
-              ),
-              class = "d-flex gap-3"
-            )
-          ),
-          uiOutput("evaluation")
+          card_header("Student evaluation"),
+          div(
+            mod_highlight_ui_text("highlights"),
+            style = "max-height: 70vh; overflow-y: auto;"
+          )
         ),
         navset_card_tab(
           nav_panel(
             title = div(" Competencies", id = "compTitle"),
-            selectInput("cID", "Competency", choices = NULL, width = "100%"),
-            uiOutput("compDescr"),
-            mod_highlight_ui(
+            mod_highlight_ui_controls(
               "highlights",
-              "evaluation",
-              "Text evidence (required)"
+              NS("highlights", "textDisplay"),
+              "1. Highlight text evidence"
             ),
             radioButtons(
+              "cID",
+              "2. Pick best fitting competency",
+              choices = c("Loading ..."),
+              width = "100%"
+            ),
+            uiOutput("compDescr"),
+            radioButtons(
               "specificity",
-              "Specificity score",
+              "3. Select specificity score",
               choices = c(1:3),
               inline = T
             ),
@@ -386,13 +385,72 @@ server <- function(input, output, session) {
 
   reviewScores <- reactiveVal()
 
+  # The evaluation text the highlight module renders and matches offsets
+  # against - questions are always included so start/end stay meaningful
+  evalText <- reactive({
+    req(input$reviewID)
+    evalID <- tbl(conn, "review_assignment") |>
+      filter(id == as.integer(input$reviewID)) |>
+      pull(evaluation_id)
+
+    dbGetEvals(
+      ids = evalID,
+      conn = conn,
+      redacted = T,
+      includeQuestions = T,
+      html = T,
+      subtitleTag = "b"
+    ) |>
+      pull(evaluation)
+  })
+
+  # Bumped after a successful competency commit to force the highlight module
+  # to fully reseed from `highlightInitVals()` (i.e. from the database),
+  # so a just-committed staged highlight is reflected as committed and isn't
+  # accidentally re-committed under a different competency later. Kept
+  # separate from `forceRefresh()` below, which also fires for unrelated
+  # updates (overall scores, AI review) that shouldn't wipe staged highlights.
+  highlightRefreshTrigger <- reactiveVal(0)
+
+  # Previously saved highlights (all competencies) for the current review,
+  # used to seed the highlight module whenever evalText() changes. Also
+  # depends on highlightRefreshTrigger() so a post-commit reseed re-queries
+  # the database instead of reusing a stale cached value.
+  highlightInitVals <- reactive({
+    highlightRefreshTrigger()
+    req(input$reviewID)
+    reviewID <- as.integer(input$reviewID)
+
+    compScores <- tbl(conn, "competency_score") |>
+      filter(review_assignment_id == reviewID) |>
+      select(id, competency_id) |>
+      collect()
+
+    tbl(conn, "competency_text") |>
+      filter(competency_score_id %in% local(compScores$id)) |>
+      collect() |>
+      left_join(
+        compScores |> select(competency_score_id = id, competency_id),
+        by = "competency_score_id"
+      ) |>
+      filter(!is.na(start), !is.na(end)) |>
+      transmute(
+        group_id = as.character(competency_id),
+        start = as.integer(start),
+        end = as.integer(end),
+        text = text_match
+      )
+  })
+
   # Highlight selection module
-  defaultEvidence <- reactiveVal(c())
-  resetSel <- reactiveVal()
   txtEvidence <- mod_highlight_server(
     "highlights",
-    defaults = defaultEvidence,
-    reset = resetSel
+    text = reactive({
+      highlightRefreshTrigger()
+      evalText()
+    }),
+    cur_group_id = reactive(input$cID),
+    init_vals = highlightInitVals
   )
 
   # Populate reviewers
@@ -428,7 +486,7 @@ server <- function(input, output, session) {
             )
           )
         ),
-        evaluation_id
+        desc(modified)
       ) |>
       mutate(
         descr = sprintf(
@@ -535,10 +593,16 @@ server <- function(input, output, session) {
 
   # Reload UI when review selection changes or after a forced refresh
   forceRefresh <- reactiveVal(0)
+  # Tracks the last reviewID this block ran for, so it can tell a genuine
+  # review switch (reset cID to the first competency) apart from a
+  # same-review forceRefresh (e.g. after addComp - keep cID as-is).
+  lastReviewID <- reactiveVal(NA_integer_)
   observeEvent(
     c(input$reviewID, forceRefresh()),
     {
       reviewID <- as.integer(input$reviewID)
+      isNewReview <- !identical(reviewID, lastReviewID())
+      lastReviewID(reviewID)
 
       # Get any previous scores
       review_assingment <- tbl(conn, "review_assignment") |>
@@ -572,10 +636,22 @@ server <- function(input, output, session) {
       tabStatusIcon("overall", overallStatus, session = session)
       tabStatusIcon("submit", submitStatus, session = session)
 
-      # Competency list (from competency table)
-      updateSelectInput(
+      # Competency list (from competency table). On a genuine review switch,
+      # reset to the first competency as before; on a same-review
+      # forceRefresh (e.g. after addComp) keep whatever was selected.
+      updateRadioButtons(
         inputId = "cID",
-        choices = setNames(competencies_db$competency_id, competencies_db$name)
+        choiceNames = competencies_db$name,
+        choiceValues = competencies_db$competency_id,
+        selected = if (
+          !isNewReview &&
+            !is.null(input$cID) &&
+            input$cID %in% as.character(competencies_db$competency_id)
+        ) {
+          input$cID
+        } else {
+          NULL
+        }
       )
 
       # Specificity score options — loaded from the rubric attached to this review
@@ -646,22 +722,6 @@ server <- function(input, output, session) {
     compScores <- reviewScores()$compScores |>
       filter(competency_id == as.integer(input$cID))
 
-    compText <- reviewScores()$compText |>
-      filter(competency_score_id %in% compScores$id)
-
-    # Update all competency scoring values
-    defaultEvidence(compText$text_match)
-    resetSel(Sys.time())
-
-    updateRadioButtons(
-      inputId = "specificity",
-      selected = if (nrow(compScores) == 0) {
-        character(0)
-      } else {
-        compScores$specificity
-      }
-    )
-
     updateTextAreaInput(
       input = "competencyComment",
       value = ifelse(nrow(compScores) == 0, "", compScores$note)
@@ -686,75 +746,101 @@ server <- function(input, output, session) {
     tagList(tags$i(if (length(desc) == 1) desc else ""))
   })
 
-  # The UI that shows the evaluation
-  output$evaluation <- renderUI({
-    req(input$reviewID)
-    evalID <- tbl(conn, "review_assignment") |>
-      filter(id == as.integer(input$reviewID)) |>
-      pull(evaluation_id)
-
-    div(
-      HTML(
-        dbGetEvals(
-          ids = evalID,
-          conn = conn,
-          redacted = T,
-          includeQuestions = input$showQuestions,
-          html = T,
-          subtitleTag = "b"
-        ) |>
-          pull(evaluation)
-      ),
-      style = "max-height: 70vh; overflow-y: auto;"
-    )
-  })
-
   # Add or update a competency review
   observeEvent(input$addComp, {
-    evidence <- str_trim(txtEvidence()$text)
-    if (length(evidence) == 0) {
-      showModal(modalDialog(
-        HTML(
-          "Please make sure to provide miminal text evidence by higlighting",
-          "pieces of text and clicking the 'Add highlighted' button in the rubric"
-        ),
-        title = "Text evidence missing"
-      ))
+    if (is.null(input$cID)) {
+      showNotification(
+        "Please select a competency before saving.",
+        type = "warning"
+      )
+      return(invisible())
     }
 
-    req(length(evidence) > 0)
+    # Staged highlights are committed to the currently selected competency;
+    # already-committed, non-deleted highlights for this competency are
+    # carried over as-is. Rows marked "deleted" are deliberately excluded -
+    # dbReviewUpdate()'s delete-then-reinsert below removes them from the DB
+    # by simply never reinserting them.
+    groupEvidence <- txtEvidence() |>
+      filter(
+        status == "staged" |
+          (status == "committed" & group_id == as.character(input$cID))
+      )
 
-    if (is.null(input$specificity)) {
-      showModal(modalDialog(
-        HTML("Please make sure to select a specificity score"),
-        title = "Text evidence missing"
-      ))
+    # Nothing left to score once every highlight for this competency has
+    # been marked for deletion (and nothing new was staged) - the whole
+    # competency review is being removed, so specificity doesn't apply.
+    onlyDeletions <- nrow(groupEvidence) == 0 &&
+      any(
+        txtEvidence()$status == "deleted" &
+          txtEvidence()$group_id == as.character(input$cID)
+      )
+
+    if (is.null(input$specificity) && !onlyDeletions) {
+      showNotification(
+        "Please select a specificity score before saving.",
+        type = "warning"
+      )
+      return(invisible())
     }
 
-    req(input$specificity)
+    if (onlyDeletions) {
+      existingRow <- reviewScores()$compScores |>
+        filter(competency_id == as.integer(input$cID))
+      if (nrow(existingRow) > 0) {
+        tbl_delete(
+          existingRow |> select(id),
+          conn,
+          "competency_score",
+          commit = FALSE
+        )
+      }
 
-    comment <- str_trim(input$competencyComment)
-    compScores <- data.frame(
-      review_assignment_id = as.integer(input$reviewID),
-      competency_id = as.integer(input$cID),
-      specificity = as.integer(input$specificity),
-      note = ifelse(comment == "", NA, comment)
-    )
+      scores <- dbReviewUpdate(
+        conn = conn,
+        statusCode = ra_inprogress,
+        overallScores = data.frame(id = as.integer(input$reviewID)),
+        commit = TRUE
+      )
+    } else {
+      evidence <- str_trim(groupEvidence$text)
+      if (length(evidence) == 0) {
+        showModal(modalDialog(
+          HTML(
+            "Please make sure to provide miminal text evidence by higlighting",
+            "pieces of text and clicking the 'Add highlighted' button in the rubric"
+          ),
+          title = "Text evidence missing"
+        ))
+      }
 
-    compText <- data.frame(
-      review_assignment_id = as.integer(input$reviewID),
-      competency_id = as.integer(input$cID),
-      text_match = evidence
-    )
+      req(length(evidence) > 0)
 
-    scores <- dbReviewUpdate(
-      conn = conn,
-      statusCode = ra_inprogress,
-      compScores = compScores,
-      compText = compText,
-      removeNotListed = F,
-      commit = T
-    )
+      comment <- str_trim(input$competencyComment)
+      compScores <- data.frame(
+        review_assignment_id = as.integer(input$reviewID),
+        competency_id = as.integer(input$cID),
+        specificity = as.integer(input$specificity),
+        note = ifelse(comment == "", NA, comment)
+      )
+
+      compText <- data.frame(
+        review_assignment_id = as.integer(input$reviewID),
+        competency_id = as.integer(input$cID),
+        text_match = evidence,
+        start = groupEvidence$start,
+        end = groupEvidence$end
+      )
+
+      scores <- dbReviewUpdate(
+        conn = conn,
+        statusCode = ra_inprogress,
+        compScores = compScores,
+        compText = compText,
+        removeNotListed = F,
+        commit = T
+      )
+    }
 
     # Update the reviewScores var (used in submission tab)
     reviewScores(scores)
@@ -765,8 +851,50 @@ server <- function(input, output, session) {
     tabStatusIcon("comp", 1, session = session)
     tabStatusIcon("submit", 1, session = session)
     forceRefresh(forceRefresh() + 1)
+    highlightRefreshTrigger(highlightRefreshTrigger() + 1)
     showNotification(sprintf("Competency updated"), type = "message")
   })
+
+  # Keep the specificity selector and the competency picker in sync with the
+  # highlight evidence itself.
+  # - A pending deletion (a committed highlight marked for removal) locks
+  #   "cID" (via shinyjs) so the user can't switch competency away from it
+  #   before resolving the deletion - a deleted row is always tied to the
+  #   competency it was deleted from, so leaving it would strand it.
+  # - Staged evidence does NOT lock "cID": staging is independent of the
+  #   active competency (see mod_highlight_server()), so the user can browse
+  #   other competencies while something is staged and commit it later.
+  # Either staged or pending-deletion evidence still forces a specificity
+  # reselect, since an existing saved score wasn't chosen against that
+  # pending evidence. With neither, restore the previously saved score for
+  # the current competency, if any.
+  observeEvent(
+    list(input$cID, input$reviewID, txtEvidence()),
+    {
+      req(reviewScores())
+      compScores <- reviewScores()$compScores |>
+        filter(competency_id == as.integer(input$cID))
+
+      hasStaged <- any(txtEvidence()$status == "staged")
+      hasDeleted <- any(txtEvidence()$status == "deleted")
+
+      if (hasDeleted) {
+        shinyjs::disable("cID")
+      } else {
+        shinyjs::enable("cID")
+      }
+
+      updateRadioButtons(
+        inputId = "specificity",
+        selected = if (hasStaged || hasDeleted || nrow(compScores) == 0) {
+          character(0)
+        } else {
+          compScores$specificity
+        }
+      )
+    },
+    ignoreInit = TRUE
+  )
 
   # Add or update the overall scores
   observeEvent(input$addOverall, {

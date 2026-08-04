@@ -1,3 +1,153 @@
+#' Initialize a new NARRATE database, load evaluation data, and seed reviews
+#'
+#' Creates a new NARRATE SQLite database from the package schema, imports
+#' evaluation data from an .xlsx file, registers the default AI and human
+#' reviewers, links the rubric prompts, and assigns the same random sample
+#' of evaluations to every reviewer so review can start immediately.
+#'
+#' @param path Path to the (new) NARRATE SQLite database
+#' @param dataset Path to the .xlsx file with the combined evaluation data
+#' @param default_ai (Default = "gpt-5.1") Model name used to create the
+#' default AI reviewer
+#' @param default_reviewers (Default = c("TK", "AW", "KM", "test")) Usernames
+#' used to create the default human reviewers
+#' @param n_assigned (Default = 3) Number of evaluations, per
+#' summary_flg / complete group, randomly assigned to every reviewer.
+#' Ignored if `id_assigned` is set
+#' @param id_assigned (Default = NULL) Vector of evaluation ids to assign to
+#' every reviewer instead of a random sample. When set, `n_assigned` is
+#' ignored and no random sampling takes place
+#' @param seed (Default = 1) Random seed used when sampling evaluations
+#' @param redactedOnly (Default = TRUE) If TRUE, only redacted evaluations
+#' are inserted into the database; the version with identifiers is omitted
+#' @param force_overwrite (Default = FALSE) If a database already exists at
+#' `path`, stop unless this is TRUE. If TRUE, the existing database (and any
+#' `-wal` / `-shm` / `-journal` sidecar files) is moved to the system temp
+#' folder with a timestamp appended before a new one is created
+#' @param verbose (Default = TRUE) Show messages with the steps in the process
+#'
+#' @import dplyr
+#' @importFrom readxl read_xlsx
+#'
+#' @returns A list with the AI and human reviewer records, the rubric id,
+#' the sampled evaluation ids and the created review assignments. The
+#' database connection opened internally is closed before returning; call
+#' `dbGetConn(path)` to continue working with the database
+#' @export
+#'
+narrate_init <- function(
+  path,
+  dataset,
+  default_ai = "gpt-5.1",
+  default_reviewers = c("TK", "AW", "KM", "test"),
+  n_assigned = 3,
+  id_assigned = NULL,
+  seed = 1,
+  redactedOnly = TRUE,
+  force_overwrite = FALSE,
+  verbose = TRUE
+) {
+  if (pkgload::is_dev_package("NARRATE")) {
+    schema <- "inst/narrate.sql"
+  } else {
+    schema <- system.file("narrate.sql", package = "NARRATE")
+  }
+
+  if (file.exists(path)) {
+    if (!force_overwrite) {
+      stop(
+        "A database already exists at ",
+        path,
+        ". Set force_overwrite = TRUE to replace it."
+      )
+    } else if (verbose) {
+      print("Move old database to temp folder")
+    }
+
+    timestamp <- as.integer(Sys.time())
+    for (suffix in c("", "-wal", "-shm", "-journal")) {
+      sidecar <- paste0(path, suffix)
+      if (file.exists(sidecar)) {
+        backup_path <- file.path(
+          tempdir(),
+          paste0(basename(sidecar), "_", timestamp)
+        )
+        file.copy(sidecar, backup_path)
+        file.remove(sidecar)
+        message(
+          "Existing database file ",
+          sidecar,
+          " moved to ",
+          backup_path,
+          ". This is a system temp folder so the file may (but is not ",
+          "guaranteed to) be removed automatically on next system startup."
+        )
+      }
+    }
+  }
+
+  if (verbose) {
+    print("Creating new database with default values")
+  }
+  dbSetup(path, schema)
+
+  # Add all evaluation data (manages its own connection internally)
+  if (verbose) {
+    print("Adding data")
+  }
+  combined_data <- readxl::read_xlsx(dataset)
+  dbAddEvaluations(combined_data, path, redactedOnly = redactedOnly)
+
+  if (verbose) {
+    print("Random initial review assignments")
+  }
+  conn <- dbGetConn(path)
+
+  # Add default AI and human reviewers
+  ai_reviewer <- dbReviewerAI(conn, model = default_ai)
+  human_reviewers <- lapply(default_reviewers, function(username) {
+    dbReviewerHuman(conn, username = username)
+  }) |>
+    bind_rows()
+
+  # The initial rubric (competencies, disambiguation, scores, rules) is
+  # seeded directly by the schema; generate and link its prompts here
+  rubric_id <- tbl(conn, "rubric") |>
+    summarise(id = max(id, na.rm = TRUE)) |>
+    pull(id)
+  rubric_link_prompts(conn, rubric_id)
+
+  # Assign the same set of evaluations to every reviewer: either the
+  # provided ids, or a random sample if none were given
+  if (!is.null(id_assigned)) {
+    eval_sample <- id_assigned
+  } else {
+    set.seed(seed)
+    eval_sample <- tbl(conn, "evaluation") |>
+      group_by(summary_flg, complete) |>
+      slice_sample(n = n_assigned) |>
+      pull(id)
+  }
+
+  reviewer_ids <- c(ai_reviewer$id, human_reviewers$id)
+
+  assignments <- lapply(reviewer_ids, function(reviewer_id) {
+    dbReviewAssignment(
+      conn,
+      reviewer_id = reviewer_id,
+      evaluation_id = eval_sample,
+      rubric_id = rubric_id,
+      redacted = TRUE,
+      include_questions = TRUE
+    )
+  }) |>
+    bind_rows()
+
+  dbFinish(conn)
+
+  return(invisible(TRUE))
+}
+
 #' Check if a prompt is structured correctly and returned a parsed version
 #'
 #' @param prompt String of text to check
@@ -137,11 +287,16 @@ getFunArgs <- function(exclude) {
 #'
 #' @export
 #'
-deployShinyApp <- function(db, gitHubBranch, dev = F) {
+deployShinyApp <- function(
+  db,
+  gitHubBranch,
+  dev = F,
+  app_file = "inst/review_app.R"
+) {
   root <- ifelse(dev, "deploy/NARRATE-dev", "deploy/NARRATE")
   # Copy files
   dir.create(root, showWarnings = F)
-  file.copy("inst/review_app.R", file.path(root, "app.R"), overwrite = T)
+  file.copy(app_file, file.path(root, "app.R"), overwrite = T)
   file.copy("renv.lock", file.path(root, "renv.lock"), overwrite = T)
   file.copy(db, file.path(root, "narrate.db"), overwrite = T)
   pak::pak(paste0("pieterjanvc/NARRATE@", gitHubBranch))
@@ -300,6 +455,9 @@ pin_dev_set <- function(
 #' @param db_path Path to the SQLite database
 #' @param feq_sec (Default = 60) Polling interval in seconds
 #' @param max_wait (Default = 2 hours) Maximum time in seconds before killing the process
+#' @param pkg_path (Default = here::here()) Path to the package source, loaded
+#'   with pkgload::load_all() in the background process so that dev-only
+#'   functions (e.g. llm_batch_status) are available there too
 #'
 #' @import callr keyring
 #'
@@ -309,12 +467,14 @@ batch_status_notify <- function(
   batch_id,
   db_path,
   feq_sec = 60,
-  max_wait = 2 * 3600
+  max_wait = 2 * 3600,
+  pkg_path = here::here()
 ) {
   auth <- keyring::key_get("PUSHOVER_API", "default") |> jsonlite::fromJSON()
 
   bg <- callr::r_bg(
-    func = function(batch_id, db_path, feq_sec, max_wait, auth) {
+    func = function(batch_id, db_path, feq_sec, max_wait, auth, pkg_path) {
+      pkgload::load_all(pkg_path, quiet = TRUE)
       conn <- sqlife::dbGetConn(db_path)
 
       start_time <- Sys.time()
@@ -377,7 +537,8 @@ batch_status_notify <- function(
       db_path = db_path,
       feq_sec = feq_sec,
       max_wait = max_wait,
-      auth = auth
+      auth = auth,
+      pkg_path = pkg_path
     )
   )
 

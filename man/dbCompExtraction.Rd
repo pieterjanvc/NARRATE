@@ -28,7 +28,9 @@ competency_text as dataframes in the result list}
 }
 \value{
 A list with success (T/F) and optionally competency_score and
-competency_text dataframes if return_tables = TRUE
+competency_text dataframes if return_tables = TRUE. success is FALSE
+without writing anything if comp_extraction contains duplicate cIndex
+values (the LLM should never emit the same cIndex twice).
 }
 \description{
 Insert or update a list of extracted competencies

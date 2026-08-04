@@ -58,7 +58,8 @@ llm_comp_extract_run <- function(
     new_status <- if (result$statusCode == 2) 3L else -2L
 
     if (result$statusCode == 2 && length(result$data) > 0) {
-      dbCompExtraction(conn, rid, result$data, commit = FALSE)
+      write_result <- dbCompExtraction(conn, rid, result$data, commit = FALSE)
+      if (!isTRUE(write_result$success)) new_status <- -2L
     }
 
     tbl_update(
@@ -290,29 +291,34 @@ batch_extract_process <- function(batch_id, conn) {
   }
 
   results <- batch_results_preprocess(batch_info$file_output_id)
-  success <- sapply(results, "[[", "statusCode") == 2
 
-  to_update <- lapply(results, "[", c("review_id", "statusCode", "tokens_in", "tokens_out")) |>
+  # Write competency data first so a failed write (e.g. the LLM emitted a
+  # duplicate cIndex) can downgrade that review's status to -2 below, instead
+  # of leaving it marked as complete or aborting the whole batch.
+  write_status <- sapply(results, function(r) {
+    if (r$statusCode != 2) return(-2L)
+
+    extractions <- r$data$extractions
+    if (length(extractions) == 0) return(3L)
+
+    # fromJSON with simplifyVector=FALSE returns text as a list; dbCompExtraction
+    # needs character vectors so data.frame() doesn't treat values as column names
+    for (i in seq_along(extractions)) {
+      extractions[[i]]$text <- unlist(extractions[[i]]$text)
+    }
+    result <- dbCompExtraction(conn, r$review_id, extractions, commit = FALSE)
+    if (isTRUE(result$success)) 3L else -2L
+  })
+
+  to_update <- lapply(results, "[", c("review_id", "tokens_in", "tokens_out")) |>
     bind_rows() |>
     mutate(
-      statusCode = ifelse(statusCode == 2, 3L, -2L),
+      statusCode = write_status,
       modified = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     ) |>
     rename(id = review_id)
 
   tbl_update(to_update, conn, "review_assignment", returnData = FALSE, commit = FALSE)
-
-  for (r in results[success]) {
-    extractions <- r$data$extractions
-    if (length(extractions) > 0) {
-      # fromJSON with simplifyVector=FALSE returns text as a list; dbCompExtraction
-      # needs character vectors so data.frame() doesn't treat values as column names
-      for (i in seq_along(extractions)) {
-        extractions[[i]]$text <- unlist(extractions[[i]]$text)
-      }
-      dbCompExtraction(conn, r$review_id, extractions, commit = FALSE)
-    }
-  }
 
   tbl_update(
     data.frame(

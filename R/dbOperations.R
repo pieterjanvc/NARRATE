@@ -233,8 +233,18 @@ dbAddEvaluations <- function(combined_data, dbPath, redactedOnly = F) {
     )
   }
 
+  # rotation_date is reformatted to "%Y-%m-%d" when inserted into the
+  # rotation table, so normalize it the same way before comparing
+  combined_data_check <- combined_data |>
+    mutate(
+      rotation_date = format(
+        as.Date(rotation_date, tryFormats = c("%Y-%m-%d", "%m/%d/%Y")),
+        "%Y-%m-%d"
+      )
+    )
+
   #Check if data matches
-  if (!all(check == combined_data, na.rm = T)) {
+  if (!all(check == combined_data_check, na.rm = T)) {
     stop(
       "Something went wrong and the processed data does not match the original"
     )
@@ -500,7 +510,7 @@ dbReviewUpdate <- function(
         select(competency_score_id = id, review_assignment_id, competency_id),
       by = c("review_assignment_id", "competency_id")
     ) |>
-    select(competency_score_id, text_match)
+    select(competency_score_id, text_match, start, end)
   tbl_insert(compText, conn, "competency_text", commit = commit)
 
   # Return all scores for this review, not just the newly inserted row
@@ -564,8 +574,9 @@ dbReviewerHuman <- function(
 ) {
   if (!missing(id)) {
     check <- id
+    x <- id
     id <- tbl(conn, "reviewer") |>
-      filter(id %in% {{ id }}, human == 1) |>
+      filter(id %in% x, human == 1) |>
       pull(id)
     # Check if exists
     if (length(id) == 0) {
@@ -578,8 +589,9 @@ dbReviewerHuman <- function(
   } else if (missing(username)) {
     stop("A new human reviewer needs at least a username")
   } else {
+    x <- username
     check <- tbl(conn, "reviewer") |>
-      filter(username %in% {{ username }}) |>
+      filter(username %in% x) |>
       pull(username)
     if (length(check) > 0) {
       stop(sprintf(
@@ -726,7 +738,7 @@ dbReviewAssignment <- function(
         summarise(id = max(id, na.rm = TRUE)) |>
         pull(id)
       if (length(data$rubric_id) == 0 || is.na(data$rubric_id)) {
-        stop("No rubric found. Run rubric_process() first.")
+        stop("No rubric found. Run rubric_add() first.")
       }
     }
 
@@ -754,7 +766,9 @@ dbReviewAssignment <- function(
 #' @importFrom sqlife tbl_insert tbl_update tbl_delete
 #'
 #' @returns A list with success (T/F) and optionally competency_score and
-#' competency_text dataframes if return_tables = TRUE
+#' competency_text dataframes if return_tables = TRUE. success is FALSE
+#' without writing anything if comp_extraction contains duplicate cIndex
+#' values (the LLM should never emit the same cIndex twice).
 #' @export
 dbCompExtraction <- function(
   conn,
@@ -765,17 +779,23 @@ dbCompExtraction <- function(
 ) {
   ra_id <- review_assignment_id
 
+  new_indexes <- sapply(comp_extraction, "[[", "cIndex")
+  if (anyDuplicated(new_indexes) > 0) {
+    return(list(success = FALSE))
+  }
+
   # Resolve cIndex (order position) → competency_id via rubric_competency
-  rubric_id <- tbl(conn, "review_assignment") |>
+  ra_info <- tbl(conn, "review_assignment") |>
     filter(id == local(ra_id)) |>
-    pull(rubric_id)
+    select(rubric_id, evaluation_id, redacted) |>
+    collect()
+  rubric_id <- ra_info$rubric_id
 
   order_map <- tbl(conn, "rubric_competency") |>
     filter(rubric_id == local(rubric_id)) |>
     select(comp_order = order, competency_id) |>
     collect()
 
-  new_indexes <- sapply(comp_extraction, "[[", "cIndex")
   new_comp_ids <- order_map$competency_id[match(
     new_indexes,
     order_map$comp_order
@@ -820,12 +840,38 @@ dbCompExtraction <- function(
     filter(review_assignment_id == local(ra_id)) |>
     collect()
 
+  # Plain text (tag-stripped) the extracted quotes are matched against, in the
+  # same coordinate space mod_highlight_server renders highlights against
+  plainText <- dbGetEvals(
+    ids = ra_info$evaluation_id,
+    conn = conn,
+    redacted = if (is.na(ra_info$redacted)) TRUE else as.logical(ra_info$redacted),
+    includeQuestions = TRUE,
+    html = TRUE,
+    subtitleTag = "b"
+  ) |>
+    pull(evaluation) |>
+    mod_highlight_strip_tags()
+
+  # Locate every extracted quote up front (not per-competency) so matches
+  # claim non-overlapping ranges across the whole review, not just within
+  # their own competency
+  all_texts <- unlist(lapply(comp_extraction, "[[", "text"), use.names = FALSE)
+  all_pos <- if (length(all_texts) > 0) {
+    mod_highlight_locate(plainText, all_texts)
+  } else {
+    data.frame(start = integer(0), end = integer(0))
+  }
+
   # --- competency_text: delete existing and insert new for each extracted item
   all_text_new <- list()
+  posCursor <- 0L
 
   for (item in comp_extraction) {
     comp_id <- order_map$competency_id[order_map$comp_order == item$cIndex]
     texts <- item$text
+    item_pos <- all_pos[posCursor + seq_along(texts), , drop = FALSE]
+    posCursor <- posCursor + length(texts)
 
     score_id <- all_scores |>
       filter(competency_id == local(comp_id)) |>
@@ -848,7 +894,9 @@ dbCompExtraction <- function(
       new_text <- tbl_insert(
         data.frame(
           competency_score_id = score_id,
-          text_match = texts
+          text_match = texts,
+          start = item_pos$start,
+          end = item_pos$end
         ),
         conn,
         "competency_text",

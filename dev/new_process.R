@@ -1,7 +1,7 @@
 # ARGUMENTS
 # *********
 seed <- 20260504
-db_path <- "local/narrate.db"
+db_path <- "local/narrate-ai.db"
 # file.remove(db_path)
 dbSetup(db_path, "inst/narrate.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
@@ -18,25 +18,39 @@ combined_data <- readxl::read_xlsx(
 # Add default AI reviewer
 . <- dbReviewerAI(conn, model = "gpt-5.1")
 . <- dbReviewerHuman(conn, username = c("TK", "AW", "KM", "PJ"))
-# Process the rubric and generate prompts
-rubric_process(conn)
+# The initial rubric is seeded directly by inst/narrate.sql; link its prompts
+rubric_id <- tbl(conn, "rubric") |>
+  summarise(id = max(id, na.rm = TRUE)) |>
+  pull(id)
+rubric_link_prompts(conn, rubric_id)
 
 dbAddCoreFaculty("local/core_faculty.csv", conn)
 
-# Assign the same n random to the AI
-set.seed(seed)
-evalSample <-
-  tbl(conn, "evaluation") |>
-  select(id, summary_flg, complete) |>
-  group_by(summary_flg, complete) |>
-  collect() |>
-  slice_sample(n = 3) |>
-  pull(id)
+core_faculty <- read.csv("local/core_faculty.csv")
 
-# Assign the same random to reviewers
-evalSample <- c(1115, 336, 1577, 937)
+# Get all reviews written by a core-faculty member, before and after start
 
-for (i in 2:5) {
+evalSample <- tbl(conn, "evaluator") |>
+  filter(!is.na(core_faculty_start)) |>
+  left_join(
+    tbl(conn, "evaluation"),
+    by = c("id" = "evaluator_id")
+  ) |>
+  pull(id.y)
+
+# set.seed(seed)
+# evalSample <-
+#   tbl(conn, "evaluation") |>
+#   select(id, summary_flg, complete) |>
+#   group_by(summary_flg, complete) |>
+#   collect() |>
+#   slice_sample(n = 3) |>
+#   pull(id)
+
+# #Assign
+# evalSample <- c(1115, 336, 1577, 937)
+
+for (i in 1:5) {
   assingments <- dbReviewAssignment(
     conn,
     reviewer_id = i,
@@ -48,15 +62,15 @@ for (i in 2:5) {
 }
 
 
-review_ids <- 1:3
-review_ids <- tbl(conn, "review_assignment") |>
-  filter(statusCode == 0) |>
-  pull(id)
+# review_ids <- 1:3
+# review_ids <- tbl(conn, "review_assignment") |>
+#   filter(statusCode == 0) |>
+#   pull(id)
 
-# -------- BATCH - 2148 total
+# -------- BATCH
 
 review_ids <- tbl(conn, "review_assignment") |>
-  filter(statusCode == 0) |>
+  filter(statusCode == 0, reviewer_id == 1) |>
   pull(id)
 
 tbl(conn, "batch") |> filter(statusCode < 4)

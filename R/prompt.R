@@ -1,12 +1,13 @@
 #' Generate both prompt templates populated with rubric data
 #'
-#' Replaces \code{\{competencies\}}, \code{\{disambiguation\}}, and per-category
-#' score placeholders (\code{\{specificity\}}, \code{\{utility\}},
+#' Replaces \code{\{competencies\}}, \code{\{disambiguation\}}, \code{\{rules\}},
+#' and per-category score placeholders (\code{\{specificity\}}, \code{\{utility\}},
 #' \code{\{sentiment\}}) with content queried from the database for the
 #' specified rubric.
 #'
-#' Competencies and score options are ordered by the \code{order} column in the
-#' rubric join tables, so the prompt reflects the rubric's intended sequence.
+#' Competencies, rules, and score options are ordered by the \code{order}
+#' column in the rubric join tables, so the prompt reflects the rubric's
+#' intended sequence.
 #'
 #' Note: placeholder replacement uses \code{gsub(fixed = TRUE)}, not
 #' \code{glue}, so JSON braces in the template OUTPUT sections are safe.
@@ -81,6 +82,27 @@ prompt_generate <- function(conn, rubric_id = NULL) {
     collapse = "\n\n"
   )
 
+  # --- Rules (ordered by rubric_rule.order) ---
+  rule_data <- tbl(conn, "rubric_rule") |>
+    filter(rubric_id == local(rid)) |>
+    arrange(order) |>
+    left_join(
+      tbl(conn, "rule") |> select(rule_id = id, title, description),
+      by = "rule_id"
+    ) |>
+    select(rule_order = order, title, description) |>
+    collect()
+
+  rules <- paste(
+    sprintf(
+      "%d. **%s**: %s",
+      rule_data$rule_order,
+      rule_data$title,
+      rule_data$description
+    ),
+    collapse = "\n\n"
+  )
+
   # --- Score sections (ordered by rubric join table order) ---
   score_section <- function(join_table, score_table, id_col) {
     rows <- tbl(conn, join_table) |>
@@ -103,6 +125,7 @@ prompt_generate <- function(conn, rubric_id = NULL) {
   replacements <- list(
     competencies = competencies,
     disambiguation = disambiguation,
+    rules = rules,
     specificity = score_section(
       "rubric_specificity",
       "specificity",

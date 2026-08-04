@@ -1,6 +1,6 @@
 Package: NARRATE
 Title: Narrative Assessment Review and Refinement using AI to support Teaching and Evaluation
-Version: 0.1.3
+Version: 0.2.0
 Authors@R: 
     person("PJ", "Van Camp", , "pjvancamp@hms.harvard.edu", role = c("aut", "cre"))
 Description: Build an artificial intelligence powered platform to analyze the 
@@ -11,6 +11,7 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Suggests:
   renv,
+  chromote,
   devtools,
   roxygen2,
   packrat,
@@ -29,9 +30,12 @@ Imports:
   jsonlite,
   keyring,
   pins,
+  pkgload,
+  readxl,
   rlang,
   RSQLite,
   shiny,
+  shinyjs,
   stringr,
   sqlife
 Config/roxygen2/version: 8.0.0
