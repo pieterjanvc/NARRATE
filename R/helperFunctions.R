@@ -12,7 +12,11 @@
 #' @param default_reviewers (Default = c("TK", "AW", "KM", "test")) Usernames
 #' used to create the default human reviewers
 #' @param n_assigned (Default = 3) Number of evaluations, per
-#' summary_flg / complete group, randomly assigned to every reviewer
+#' summary_flg / complete group, randomly assigned to every reviewer.
+#' Ignored if `id_assigned` is set
+#' @param id_assigned (Default = NULL) Vector of evaluation ids to assign to
+#' every reviewer instead of a random sample. When set, `n_assigned` is
+#' ignored and no random sampling takes place
 #' @param seed (Default = 1) Random seed used when sampling evaluations
 #' @param redactedOnly (Default = TRUE) If TRUE, only redacted evaluations
 #' are inserted into the database; the version with identifiers is omitted
@@ -37,6 +41,7 @@ narrate_init <- function(
   default_ai = "gpt-5.1",
   default_reviewers = c("TK", "AW", "KM", "test"),
   n_assigned = 3,
+  id_assigned = NULL,
   seed = 1,
   redactedOnly = TRUE,
   force_overwrite = FALSE,
@@ -112,12 +117,17 @@ narrate_init <- function(
     pull(id)
   rubric_link_prompts(conn, rubric_id)
 
-  # Assign the same random sample of evaluations to every reviewer
-  set.seed(seed)
-  eval_sample <- tbl(conn, "evaluation") |>
-    group_by(summary_flg, complete) |>
-    slice_sample(n = n_assigned) |>
-    pull(id)
+  # Assign the same set of evaluations to every reviewer: either the
+  # provided ids, or a random sample if none were given
+  if (!is.null(id_assigned)) {
+    eval_sample <- id_assigned
+  } else {
+    set.seed(seed)
+    eval_sample <- tbl(conn, "evaluation") |>
+      group_by(summary_flg, complete) |>
+      slice_sample(n = n_assigned) |>
+      pull(id)
+  }
 
   reviewer_ids <- c(ai_reviewer$id, human_reviewers$id)
 

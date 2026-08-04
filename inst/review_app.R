@@ -486,7 +486,7 @@ server <- function(input, output, session) {
             )
           )
         ),
-        evaluation_id
+        desc(modified)
       ) |>
       mutate(
         descr = sprintf(

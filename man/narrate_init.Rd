@@ -10,6 +10,7 @@ narrate_init(
   default_ai = "gpt-5.1",
   default_reviewers = c("TK", "AW", "KM", "test"),
   n_assigned = 3,
+  id_assigned = NULL,
   seed = 1,
   redactedOnly = TRUE,
   force_overwrite = FALSE,
@@ -28,7 +29,12 @@ default AI reviewer}
 used to create the default human reviewers}
 
 \item{n_assigned}{(Default = 3) Number of evaluations, per
-summary_flg / complete group, randomly assigned to every reviewer}
+summary_flg / complete group, randomly assigned to every reviewer.
+Ignored if \code{id_assigned} is set}
+
+\item{id_assigned}{(Default = NULL) Vector of evaluation ids to assign to
+every reviewer instead of a random sample. When set, \code{n_assigned} is
+ignored and no random sampling takes place}
 
 \item{seed}{(Default = 1) Random seed used when sampling evaluations}
 
