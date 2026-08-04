@@ -9,8 +9,8 @@ mod_highlight_ui_controls(
   element,
   label = "Text evidence",
   info = paste("<i>Select pieces of text and click 'Stage' to add them to the list",
-    "above, then click 'Add staged to selected competency' to assign the",
-    "staged selections to the current group</i>")
+    "below. Staged selections are highlighted in orange and remain pending until",
+    "all changes are saved.</i>")
 )
 }
 \arguments{
@@ -27,12 +27,15 @@ and its children (don't provide the #)}
 Shiny UI element
 }
 \description{
-UI has (top to bottom): a staging area listing not-yet-saved selections, a
-"Stage" / "Discard" button pair to add the current text selection to that
-staging area or drop it, a compact list of selections already saved to the
-currently active group, and an "Add staged to selected competency" button
-that commits the staging area to that group. Both lists let individual
-entries be removed again.
+UI has (top to bottom): a staging area listing not-yet-committed
+selections, a "Stage" / "Discard" button pair to add the current text
+selection to that staging area or drop it, and a compact list of
+selections already committed to the currently active group. Staged
+entries can be removed outright; committed entries instead have their
+trash icon toggle a "marked for deletion" state (shown struck-through in
+red, clicking it again undoes it) - actually deleting them from storage
+happens outside this module - see the \code{status} column on
+\code{\link[=mod_highlight_server]{mod_highlight_server()}}'s return value.
 }
 \details{
 Must be paired with a \code{\link[=mod_highlight_ui_text]{mod_highlight_ui_text()}} call using the \emph{same}

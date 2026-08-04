@@ -316,66 +316,54 @@ INSERT INTO "status_codes" ("function", "code", "description") VALUES
 
 INSERT INTO "competency" ("id", "cID", "name", "description") VALUES
   (1, 1, 'Medical Knowledge',
-    'Demonstrate understanding of foundational principles that underlie the ' ||
-    'medical sciences and apply this knowledge in care of individuals and ' ||
-    'populations. Generate an appropriate differential diagnosis.'),
+    'Demonstrate understanding of foundational principles that underlie the medical
+sciences and apply this knowledge in care of individuals and populations.
+'),
   (2, 2, 'Medical History Taking and Physical Examination',
-    'Elicit and synthesize a complete and accurate medical history and ' ||
-    'perform a focused or comprehensive physical examination, using ' ||
-    'information from the patient and other relevant sources.'),
-  (3, 3, 'Provide Effective Oral and Written Professional Communication',
-    'Communicate clinical information effectively, efficiently, and ' ||
-    'professionally in oral and written formats, including concise patient ' ||
-    'presentations on rounds and well-organized clinical documentation such ' ||
-    'as initial histories and physicals and daily progress notes to support ' ||
-    'patient care.'),
+    'Elicit and synthesize a complete and accurate medical history and perform a
+focused or comprehensive physical examination, using information from the
+patient and other relevant sources.
+'),
+  (3, 3, 'Communicate clinical information effectively, efficiently, and professionally in
+oral and written formats, including concise patient presentations on rounds and
+well-organized clinical documentation such as initial histories and physicals
+and daily progress notes to support patient care.
+'),
   (4, 4, 'Clinical Reasoning and Decision Making',
-    'Efficiently evaluate patient data and use clinical problem solving to ' ||
-    'prioritize a differential diagnosis and establish an assessment and plan.'),
+    'Efficiently evaluate patient data and use clinical problem solving to generate and prioritize a differential diagnosis, establish an assessment, and propose a diagnostic and/or therapeutic plan.
+'),
   (5, 5, 'Interpersonal and Communication Skills',
-    'Form collaborative and trusting relationships with patients, ' ||
-    'caregivers, staff and all. Effectively communicate with patients and ' ||
-    'caregivers to promote shared decision making.'),
+    'Form collaborative and trusting relationships with patients, caregivers, staff
+and all. Effectively communicate with patients and caregivers to promote shared
+decision making.
+'),
   (6, 6, 'Scholarly Inquiry and Evidence-Based Medicine Integration',
-    'Evaluate, analyze, and apply new and existing knowledge across ' ||
-    'biomedical, clinical, population, and data sciences through continuous ' ||
-    'self-directed learning and scholarly activity to advance patient care.'),
+    'Evaluate, analyze, and apply new and existing knowledge across biomedical,
+clinical, population, and data sciences through continuous self-directed
+learning and scholarly activity to advance patient care. 
+'),
   (7, 7, 'Professionalism',
-    'Exemplify compassion, integrity, social responsibility and respect for ' ||
-    'all persons and identities. Demonstrate responsible behaviors including ' ||
-    'accountability, patient confidentiality and safety, punctuality and the ' ||
-    'prioritizing of the needs of others while maintaining appropriate ' ||
-    'self-care. Demonstrate and embody ethical standards, principles and ' ||
-    'moral reasoning in all professional interactions with patients, ' ||
-    'caregivers, colleagues and society at large.'),
+    'Exemplify compassion, integrity, social responsibility and respect for all
+persons and identities. Demonstrate responsible behaviors including
+accountability, patient confidentiality and safety, punctuality and the
+prioritizing the needs of others while maintaining appropriate self-care.
+Demonstrate and embody ethical standards, principles and moral reasoning in all
+professional interactions with patients, caregivers, colleagues and society at
+large.
+'),
   (8, 8, 'Interprofessional and Team-Based Care',
-    'Collaborate effectively within interprofessional healthcare teams by ' ||
-    'communicating clearly and respectfully with physicians, nurses, staff ' ||
-    'and other health professionals to provide coordinated, patient-centered ' ||
-    'care.');
-
-INSERT INTO "competency_diff" ("competency_id1", "competency_id2", "description") VALUES
-  (3, 5,
-    'Comp 3 = quality and format of clinical documentation and formal oral ' ||
-    'presentations (notes, H&Ps, SOAP notes, rounds presentations). Comp 5 = ' ||
-    'direct relationship and communication with patients and families ' ||
-    'during encounters.'),
-  (1, 4,
-    'Comp 1 = demonstrating factual or conceptual knowledge, or generating ' ||
-    'a differential diagnosis. Comp 4 = applying knowledge to reason ' ||
-    'through a specific patient''s problem and arrive at a management plan.'),
-  (5, 8,
-    'Comp 5 = interactions with patients and caregivers only. Comp 8 = ' ||
-    'collaboration with physicians, nurses, and other health professionals.'),
-  (7, NULL,
-    'Only assign to Comp 7 for explicitly professional conduct — ethics, ' ||
-    'reliability, patient safety, punctuality, accountability. Do not use ' ||
-    'Comp 7 as a catch-all for positive character traits.');
+    'Collaborate effectively within interprofessional healthcare teams by
+communicating clearly and respectfully with physicians, nurses, staff and other
+health professionals to provide coordinated, patient-centered care.
+'),
+  (9, 9, 'Workplace Skills',
+    'Independently manage the patients they are caring for by organizing, 
+    prioritizing, and completing clinical tasks such as consults, updates to 
+    patients/caregivers, discharge planning, etc.');
 
 INSERT INTO "specificity" ("id", "value", "description", "example") VALUES
   (1, 1,
-    'Competency is mentioned only with general or broad qualifier without ' ||
-    'example to support it',
+    'Competency is mentioned only with general or broad qualifier without example to support it',
     'Impressive medical knowledge!'),
   (2, 2,
     'Detail about competency is mentioned without example to support it',
@@ -411,7 +399,7 @@ INSERT INTO "sentiment" ("id", "value", "description", "example") VALUES
     'strongly negative (e.g. red flags)',
     'did not have adequate fund of knowledge'),
   (2, 2,
-    'negative (e.g. coded language indicating potential criticism)',
+    'negative (including coded language indicating potential criticism)',
     'I would recommend that she continue practicing how to identify and ' ||
     'prioritize clinically relevant information when documenting (such as ' ||
     'which symptoms patients report that are actually clinically relevant ' ||
@@ -420,7 +408,7 @@ INSERT INTO "sentiment" ("id", "value", "description", "example") VALUES
     'Neutral or not enough information to indicate sentiment',
     'Her solid foundation in medical knowledge is evident - Continue reading'),
   (4, 4,
-    'positive (e.g. empty praise or clearly positive but generic)',
+    'positive',
     'Was a pleasure to work with! Strong performance.'),
   (5, 5,
     'strongly positive (e.g. signaling exceptional student)',
@@ -457,7 +445,7 @@ INSERT INTO "rubric" ("id") VALUES (1);
 
 INSERT INTO "rubric_competency" ("rubric_id", "competency_id", "order") VALUES
   (1, 1, 1), (1, 2, 2), (1, 3, 3), (1, 4, 4),
-  (1, 5, 5), (1, 6, 6), (1, 7, 7), (1, 8, 8);
+  (1, 5, 5), (1, 6, 6), (1, 7, 7), (1, 8, 8), (1, 9, 9);
 
 INSERT INTO "rubric_specificity" ("rubric_id", "specificity_id") VALUES
   (1, 1), (1, 2), (1, 3), (1, 4);

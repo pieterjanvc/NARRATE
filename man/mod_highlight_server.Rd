@@ -11,27 +11,39 @@ mod_highlight_server(id, text, cur_group_id, init_vals)
 
 \item{text}{A (reactive) character string with the source text to render,
 in HTML format. Changing this fully resets the module's state back to
-\code{init_vals()}, discarding any staged (unsaved) highlights.}
+\code{init_vals()}, discarding any staged (unsaved) highlights and any
+committed highlights marked for deletion (reverting them to committed).}
 
 \item{cur_group_id}{A (reactive) value with the currently active group ID.
 Highlights already saved to this group are shown in yellow, highlights
-saved to other groups in light gray, and staged (not yet saved to any
-group) highlights in light orange. Changing this does not reset the state,
-only the display: it re-filters the saved-highlights list to the newly
-active group. The staging area is independent of \code{cur_group_id} and is
-unaffected by it.}
+saved to other groups in light gray, highlights marked for deletion in
+soft red (regardless of group), and staged (not yet saved to any group)
+highlights in light orange. Changing this does not reset the state, only
+the display: it re-filters the saved-highlights list to the newly active
+group. The staging area is independent of \code{cur_group_id} and is unaffected
+by it.}
 
 \item{init_vals}{A (reactive) data frame with the initial highlights to
 seed the state with whenever \code{text} changes. Expected columns are
 \code{group_id}, \code{start}, \code{end} and \code{text}; \code{start}/\code{end} must use the same
 plain-text (tag-stripped), zero-indexed, half-open coordinate system that
 the module itself uses internally. Any \code{id} column is ignored - fresh
-internal ids are always assigned on seed.}
+internal ids are always assigned on seed. An optional \code{status} column
+("staged" or "committed") pre-populates the staging area: rows with
+\code{status == "staged"} seed as staged (with \code{group_id} forced to \code{NA},
+regardless of what's supplied), everything else seeds as committed. If
+\code{status} is absent, all rows are assumed already committed. Seeding never
+produces a "deleted" row - that state only arises from the trash icon on
+an already-committed row within the current session.}
 }
 \value{
 A reactive data frame with columns \code{id}, \code{group_id}, \code{start},
-\code{end} and \code{text}, holding all \emph{saved} highlights across all groups.
-Staged (not yet saved) highlights are never included here.
+\code{end}, \code{text} and \code{status}. Includes committed highlights (across all
+groups, including any marked for deletion), and staged (not yet
+committed) highlights. \code{status} is "committed", "deleted" (a committed
+highlight whose trash icon was clicked - clicking it again reverts it to
+"committed") or "staged"; \code{group_id} is \code{NA} for staged rows and unchanged
+(i.e. its original group) for deleted rows.
 }
 \description{
 Module server for text highlights

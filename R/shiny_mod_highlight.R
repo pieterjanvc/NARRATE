@@ -3,9 +3,11 @@
 #' UI has (top to bottom): a staging area listing not-yet-committed
 #' selections, a "Stage" / "Discard" button pair to add the current text
 #' selection to that staging area or drop it, and a compact list of
-#' selections already committed to the currently active group. Both lists
-#' let individual entries be removed again. Committing staged selections to
-#' a group happens outside this module - see the `status` column on
+#' selections already committed to the currently active group. Staged
+#' entries can be removed outright; committed entries instead have their
+#' trash icon toggle a "marked for deletion" state (shown struck-through in
+#' red, clicking it again undoes it) - actually deleting them from storage
+#' happens outside this module - see the `status` column on
 #' [mod_highlight_server()]'s return value.
 #'
 #' Must be paired with a [mod_highlight_ui_text()] call using the *same*
@@ -226,14 +228,16 @@ mod_highlight_locate <- function(plainText, matches) {
 #' @param id Module ID
 #' @param text A (reactive) character string with the source text to render,
 #' in HTML format. Changing this fully resets the module's state back to
-#' `init_vals()`, discarding any staged (unsaved) highlights.
+#' `init_vals()`, discarding any staged (unsaved) highlights and any
+#' committed highlights marked for deletion (reverting them to committed).
 #' @param cur_group_id A (reactive) value with the currently active group ID.
 #' Highlights already saved to this group are shown in yellow, highlights
-#' saved to other groups in light gray, and staged (not yet saved to any
-#' group) highlights in light orange. Changing this does not reset the state,
-#' only the display: it re-filters the saved-highlights list to the newly
-#' active group. The staging area is independent of `cur_group_id` and is
-#' unaffected by it.
+#' saved to other groups in light gray, highlights marked for deletion in
+#' soft red (regardless of group), and staged (not yet saved to any group)
+#' highlights in light orange. Changing this does not reset the state, only
+#' the display: it re-filters the saved-highlights list to the newly active
+#' group. The staging area is independent of `cur_group_id` and is unaffected
+#' by it.
 #' @param init_vals A (reactive) data frame with the initial highlights to
 #' seed the state with whenever `text` changes. Expected columns are
 #' `group_id`, `start`, `end` and `text`; `start`/`end` must use the same
@@ -243,14 +247,19 @@ mod_highlight_locate <- function(plainText, matches) {
 #' ("staged" or "committed") pre-populates the staging area: rows with
 #' `status == "staged"` seed as staged (with `group_id` forced to `NA`,
 #' regardless of what's supplied), everything else seeds as committed. If
-#' `status` is absent, all rows are assumed already committed.
+#' `status` is absent, all rows are assumed already committed. Seeding never
+#' produces a "deleted" row - that state only arises from the trash icon on
+#' an already-committed row within the current session.
 #'
 #' @import shiny dplyr
 #'
 #' @returns A reactive data frame with columns `id`, `group_id`, `start`,
-#' `end`, `text` and `status`. Includes both committed highlights (across all
-#' groups) and staged (not yet committed) highlights; `status` is
-#' "committed" or "staged", and `group_id` is `NA` for staged rows.
+#' `end`, `text` and `status`. Includes committed highlights (across all
+#' groups, including any marked for deletion), and staged (not yet
+#' committed) highlights. `status` is "committed", "deleted" (a committed
+#' highlight whose trash icon was clicked - clicking it again reverts it to
+#' "committed") or "staged"; `group_id` is `NA` for staged rows and unchanged
+#' (i.e. its original group) for deleted rows.
 #'
 #' @export
 #'
@@ -283,6 +292,7 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
         start = integer(),
         end = integer(),
         text = character(),
+        status = character(),
         stringsAsFactors = FALSE
       )
     }
@@ -315,7 +325,7 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
         return(list(state = emptyState(), staged = emptyStagedState()))
       }
 
-      isStaged <- if (is.null(iv$status)) {
+      isStaged <- if (!"status" %in% names(iv)) {
         rep(FALSE, nrow(iv))
       } else {
         as.character(iv$status) == "staged"
@@ -329,6 +339,7 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
           start = as.integer(iv$start)[!isStaged],
           end = as.integer(iv$end)[!isStaged],
           text = as.character(iv$text)[!isStaged],
+          status = rep("committed", sum(!isStaged)),
           stringsAsFactors = FALSE
         ),
         staged = data.frame(
@@ -448,11 +459,12 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
 
     output$textDisplay <- renderUI({
       committed <- state()
-      committed$color <- as.character(ifelse(
-        as.character(committed$group_id) %in% as.character(cur_group_id()),
-        "#fff59d",
-        "#e0e0e0"
-      ))
+      committed$color <- case_when(
+        committed$status == "deleted" ~ "#f5c6cb",
+        as.character(committed$group_id) %in% as.character(cur_group_id()) ~
+          "#fff59d",
+        TRUE ~ "#e0e0e0"
+      )
 
       stagedRows <- staged()
       stagedRows$color <- rep("#f8e5cd", nrow(stagedRows))
@@ -483,6 +495,7 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
       for (i in seq_len(nrow(rows))) {
         rid <- rows$id[i]
         btnId <- paste0("del", rid)
+        isDeleted <- rows$status[i] == "deleted"
 
         insertUI(
           paste0("#", ns("selList")),
@@ -491,11 +504,19 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
             actionButton(
               ns(btnId),
               label = NULL,
-              icon = icon("trash"),
+              icon = icon(if (isDeleted) "rotate-left" else "trash"),
               style = "padding: 3px;"
             ),
-            tags$span(rows$text[i], style = "color:#0d6efd;"),
-            id = ns(paste0("item", rid))
+            tags$span(
+              rows$text[i],
+              style = if (isDeleted) {
+                "color:#b02a2a; text-decoration: line-through;"
+              } else {
+                "color:#0d6efd;"
+              }
+            ),
+            id = ns(paste0("item", rid)),
+            style = if (isDeleted) "background-color:#f8d7da;" else NULL
           )
         )
 
@@ -504,7 +525,14 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
             rid_ <- rid
             btnId_ <- btnId
             deleteObservers[[btnId_]] <<- observeEvent(input[[btnId_]], {
-              state(state()[state()$id != rid_, , drop = FALSE])
+              df <- state()
+              idx <- df$id == rid_
+              df$status[idx] <- ifelse(
+                df$status[idx] == "deleted",
+                "committed",
+                "deleted"
+              )
+              state(df)
             })
           })
         }
@@ -648,11 +676,11 @@ mod_highlight_server <- function(id, text, cur_group_id, init_vals) {
     })
 
     # Return the full data frame of highlights, both committed (assigned to a
-    # group) and staged (not yet assigned). `status` distinguishes the two;
-    # `group_id` is always NA for staged rows.
+    # group, possibly marked for deletion) and staged (not yet assigned).
+    # `status` distinguishes "committed" / "deleted" / "staged"; `group_id`
+    # is always NA for staged rows.
     return(reactive({
       committed <- state()
-      committed$status <- rep("committed", nrow(committed))
 
       stagedRows <- staged()
       stagedRows$group_id <- rep(NA_character_, nrow(stagedRows))

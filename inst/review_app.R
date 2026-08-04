@@ -1,5 +1,6 @@
 # https://rstudio.github.io/bslib/articles/cards/index.html
 library(shiny)
+library(shinyjs)
 library(bslib)
 library(dplyr)
 library(stringr)
@@ -38,6 +39,7 @@ tabStatusIcon <- function(name, status, session) {
 }
 
 ui <- page_fluid(
+  useShinyjs(),
   theme = bs_theme(preset = "journal"),
   tags$style(HTML(
     "
@@ -746,60 +748,99 @@ server <- function(input, output, session) {
 
   # Add or update a competency review
   observeEvent(input$addComp, {
-    if (is.null(input$cID) || is.null(input$specificity)) {
+    if (is.null(input$cID)) {
       showNotification(
-        "Please select a competency and a specificity score before saving.",
+        "Please select a competency before saving.",
         type = "warning"
       )
       return(invisible())
     }
 
     # Staged highlights are committed to the currently selected competency;
-    # already-committed highlights for this competency are carried over as-is
-    # (any that were deleted in the module simply won't be in this set, and
-    # dbReviewUpdate()'s delete-then-reinsert below removes them from the DB).
+    # already-committed, non-deleted highlights for this competency are
+    # carried over as-is. Rows marked "deleted" are deliberately excluded -
+    # dbReviewUpdate()'s delete-then-reinsert below removes them from the DB
+    # by simply never reinserting them.
     groupEvidence <- txtEvidence() |>
       filter(
         status == "staged" |
           (status == "committed" & group_id == as.character(input$cID))
       )
-    evidence <- str_trim(groupEvidence$text)
-    if (length(evidence) == 0) {
-      showModal(modalDialog(
-        HTML(
-          "Please make sure to provide miminal text evidence by higlighting",
-          "pieces of text and clicking the 'Add highlighted' button in the rubric"
-        ),
-        title = "Text evidence missing"
-      ))
+
+    # Nothing left to score once every highlight for this competency has
+    # been marked for deletion (and nothing new was staged) - the whole
+    # competency review is being removed, so specificity doesn't apply.
+    onlyDeletions <- nrow(groupEvidence) == 0 &&
+      any(
+        txtEvidence()$status == "deleted" &
+          txtEvidence()$group_id == as.character(input$cID)
+      )
+
+    if (is.null(input$specificity) && !onlyDeletions) {
+      showNotification(
+        "Please select a specificity score before saving.",
+        type = "warning"
+      )
+      return(invisible())
     }
 
-    req(length(evidence) > 0)
+    if (onlyDeletions) {
+      existingRow <- reviewScores()$compScores |>
+        filter(competency_id == as.integer(input$cID))
+      if (nrow(existingRow) > 0) {
+        tbl_delete(
+          existingRow |> select(id),
+          conn,
+          "competency_score",
+          commit = FALSE
+        )
+      }
 
-    comment <- str_trim(input$competencyComment)
-    compScores <- data.frame(
-      review_assignment_id = as.integer(input$reviewID),
-      competency_id = as.integer(input$cID),
-      specificity = as.integer(input$specificity),
-      note = ifelse(comment == "", NA, comment)
-    )
+      scores <- dbReviewUpdate(
+        conn = conn,
+        statusCode = ra_inprogress,
+        overallScores = data.frame(id = as.integer(input$reviewID)),
+        commit = TRUE
+      )
+    } else {
+      evidence <- str_trim(groupEvidence$text)
+      if (length(evidence) == 0) {
+        showModal(modalDialog(
+          HTML(
+            "Please make sure to provide miminal text evidence by higlighting",
+            "pieces of text and clicking the 'Add highlighted' button in the rubric"
+          ),
+          title = "Text evidence missing"
+        ))
+      }
 
-    compText <- data.frame(
-      review_assignment_id = as.integer(input$reviewID),
-      competency_id = as.integer(input$cID),
-      text_match = evidence,
-      start = groupEvidence$start,
-      end = groupEvidence$end
-    )
+      req(length(evidence) > 0)
 
-    scores <- dbReviewUpdate(
-      conn = conn,
-      statusCode = ra_inprogress,
-      compScores = compScores,
-      compText = compText,
-      removeNotListed = F,
-      commit = T
-    )
+      comment <- str_trim(input$competencyComment)
+      compScores <- data.frame(
+        review_assignment_id = as.integer(input$reviewID),
+        competency_id = as.integer(input$cID),
+        specificity = as.integer(input$specificity),
+        note = ifelse(comment == "", NA, comment)
+      )
+
+      compText <- data.frame(
+        review_assignment_id = as.integer(input$reviewID),
+        competency_id = as.integer(input$cID),
+        text_match = evidence,
+        start = groupEvidence$start,
+        end = groupEvidence$end
+      )
+
+      scores <- dbReviewUpdate(
+        conn = conn,
+        statusCode = ra_inprogress,
+        compScores = compScores,
+        compText = compText,
+        removeNotListed = F,
+        commit = T
+      )
+    }
 
     # Update the reviewScores var (used in submission tab)
     reviewScores(scores)
@@ -814,12 +855,19 @@ server <- function(input, output, session) {
     showNotification(sprintf("Competency updated"), type = "message")
   })
 
-  # Keep the specificity selector in sync with the competency, the review,
-  # and the highlight evidence itself. If there's any evidence currently
-  # staged (not yet committed to a competency), force a reselect - an
-  # existing saved score wasn't chosen against that pending evidence. With
-  # nothing staged, restore the previously saved score for the current
-  # competency, if any.
+  # Keep the specificity selector and the competency picker in sync with the
+  # highlight evidence itself.
+  # - A pending deletion (a committed highlight marked for removal) locks
+  #   "cID" (via shinyjs) so the user can't switch competency away from it
+  #   before resolving the deletion - a deleted row is always tied to the
+  #   competency it was deleted from, so leaving it would strand it.
+  # - Staged evidence does NOT lock "cID": staging is independent of the
+  #   active competency (see mod_highlight_server()), so the user can browse
+  #   other competencies while something is staged and commit it later.
+  # Either staged or pending-deletion evidence still forces a specificity
+  # reselect, since an existing saved score wasn't chosen against that
+  # pending evidence. With neither, restore the previously saved score for
+  # the current competency, if any.
   observeEvent(
     list(input$cID, input$reviewID, txtEvidence()),
     {
@@ -828,10 +876,17 @@ server <- function(input, output, session) {
         filter(competency_id == as.integer(input$cID))
 
       hasStaged <- any(txtEvidence()$status == "staged")
+      hasDeleted <- any(txtEvidence()$status == "deleted")
+
+      if (hasDeleted) {
+        shinyjs::disable("cID")
+      } else {
+        shinyjs::enable("cID")
+      }
 
       updateRadioButtons(
         inputId = "specificity",
-        selected = if (hasStaged || nrow(compScores) == 0) {
+        selected = if (hasStaged || hasDeleted || nrow(compScores) == 0) {
           character(0)
         } else {
           compScores$specificity
