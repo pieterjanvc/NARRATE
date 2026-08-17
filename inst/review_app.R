@@ -201,7 +201,8 @@ ui <- page_fluid(
             choices = c(),
             width = "100%"
           ),
-          div(DTOutput("rubricCompTable"))
+          div(DTOutput("rubricCompTable")),
+          actionButton("addCompetency", "Add competency")
         ),
         card(
           card_header("Specificity scores"),
@@ -1311,7 +1312,14 @@ server <- function(input, output, session) {
         by = "competency_id"
       ) |>
       arrange(order) |>
-      select(competency_id, comp_order = order, name, description, note) |>
+      select(
+        rc_id = id,
+        competency_id,
+        comp_order = order,
+        name,
+        description,
+        note
+      ) |>
       collect()
   })
 
@@ -1354,6 +1362,30 @@ server <- function(input, output, session) {
       df[info$row, col_name]
     )
     rubric_comps_edited(df)
+  })
+
+  # Add a blank row for a brand-new competency, pre-filled with the next
+  # available order. It only reaches the database once the rubric is saved.
+  observeEvent(input$addCompetency, {
+    df <- rubric_comps_edited()
+    req(df)
+    next_order <- suppressWarnings(max(
+      as.integer(df$comp_order),
+      0,
+      na.rm = TRUE
+    )) +
+      1
+    rubric_comps_edited(rbind(
+      df,
+      data.frame(
+        rc_id = NA_integer_,
+        competency_id = NA_integer_,
+        comp_order = next_order,
+        name = "",
+        description = "",
+        note = NA_character_
+      )
+    ))
   })
 
   # ── Specificity ───────────────────────────────────────────────────────────────
@@ -1552,15 +1584,46 @@ server <- function(input, output, session) {
     edited <- rubric_comps_edited()
     orig <- rubric_comps_orig()
 
-    # Order must be integers 1-N with no duplicates or gaps
-    orders <- suppressWarnings(as.integer(edited$comp_order))
-    if (any(is.na(orders)) || !identical(sort(orders), seq_len(nrow(edited)))) {
+    orders_raw <- suppressWarnings(as.integer(edited$comp_order))
+    if (any(is.na(orders_raw))) {
+      showModal(modalDialog(
+        "Order values must be whole numbers.",
+        title = "Invalid order values"
+      ))
+      return()
+    }
+
+    # Order 0 is a proxy for deleting the competency from this rubric version
+    edited <- edited[orders_raw != 0, ]
+    orders <- orders_raw[orders_raw != 0]
+
+    if (nrow(edited) == 0) {
+      showModal(modalDialog(
+        "At least one competency must remain (order can't be 0 for all rows).",
+        title = "Invalid order values"
+      ))
+      return()
+    }
+
+    # Remaining order values must be integers 1-N with no duplicates or gaps
+    if (!identical(sort(orders), seq_len(nrow(edited)))) {
       showModal(modalDialog(
         sprintf(
-          "Order values must be the integers 1 to %d with no duplicates.",
+          "Order values must be the integers 1 to %d with no duplicates (use 0 to remove a competency).",
           nrow(edited)
         ),
         title = "Invalid order values"
+      ))
+      return()
+    }
+
+    if (
+      any(!nzchar(trimws(edited$name))) ||
+        any(!nzchar(trimws(edited$description)))
+    ) {
+      showModal(modalDialog(
+        "Name and description cannot be blank for any competency.",
+        title = "Missing required fields"
       ))
       return()
     }
@@ -1569,11 +1632,12 @@ server <- function(input, output, session) {
     edited <- edited[order(orders), ]
     edited$comp_order <- sort(orders)
 
-    # Insert a new competency row only when name/description/note changed;
-    # otherwise reuse the existing competency_id
+    # Insert a new competency row only when name/description/note changed
+    # (or it's a brand-new row with no competency_id yet); otherwise reuse
+    # the existing competency_id
     new_comp_ids <- integer(nrow(edited))
     for (i in seq_len(nrow(edited))) {
-      orig_row <- orig[orig$competency_id == edited$competency_id[i], ]
+      orig_row <- orig[orig$competency_id %in% edited$competency_id[i], ]
       orig_note <- if (nrow(orig_row) == 0 || is.na(orig_row$note)) {
         NA_character_
       } else {
@@ -1762,6 +1826,19 @@ server <- function(input, output, session) {
       return()
     }
 
+    comps_check <- rubric_comps_edited()
+    live_rows <- suppressWarnings(as.integer(comps_check$comp_order)) != 0
+    if (
+      any(!nzchar(trimws(comps_check$name[live_rows]))) ||
+        any(!nzchar(trimws(comps_check$description[live_rows])))
+    ) {
+      showModal(modalDialog(
+        "Name and description cannot be blank for any competency.",
+        title = "Missing required fields"
+      ))
+      return()
+    }
+
     norm <- function(x) {
       if (is.na(x) || !nzchar(trimws(x))) NA_character_ else as.character(x)
     }
@@ -1798,6 +1875,53 @@ server <- function(input, output, session) {
 
     comps_ed <- rubric_comps_edited()
     orig_comps <- rubric_comps_orig()
+
+    # Order 0 is a proxy for deleting the competency from this rubric
+    comp_orders <- suppressWarnings(as.integer(comps_ed$comp_order))
+    to_delete <- comps_ed[!is.na(comp_orders) & comp_orders == 0, ]
+    comps_ed <- comps_ed[is.na(comp_orders) | comp_orders != 0, ]
+
+    to_delete <- to_delete[!is.na(to_delete$rc_id), ]
+    if (nrow(to_delete) > 0) {
+      tbl_delete(
+        data.frame(id = to_delete$rc_id),
+        conn,
+        "rubric_competency",
+        returnData = FALSE
+      )
+    }
+
+    # Rows added via "Add competency" have no competency_id yet; create the
+    # competency and attach it to this rubric
+    new_rows <- comps_ed[is.na(comps_ed$competency_id), ]
+    if (nrow(new_rows) > 0) {
+      for (i in seq_len(nrow(new_rows))) {
+        new_id <- tbl_insert(
+          data.frame(
+            cID = new_rows$comp_order[i],
+            name = new_rows$name[i],
+            description = new_rows$description[i],
+            note = norm(new_rows$note[i])
+          ),
+          conn,
+          "competency"
+        ) |>
+          pull(id)
+
+        tbl_insert(
+          data.frame(
+            rubric_id = selected_rid,
+            competency_id = new_id,
+            order = new_rows$comp_order[i]
+          ),
+          conn,
+          "rubric_competency",
+          returnData = FALSE
+        )
+      }
+      comps_ed <- comps_ed[!is.na(comps_ed$competency_id), ]
+    }
+
     for (i in seq_len(nrow(comps_ed))) {
       update_row_if_changed(
         comps_ed$competency_id[i],
@@ -1850,7 +1974,16 @@ server <- function(input, output, session) {
 
     rubric_refresh_trigger(rubric_refresh_trigger() + 1)
     showNotification(
-      sprintf("Rubric %d updated in place", selected_rid),
+      if (nrow(to_delete) > 0) {
+        sprintf(
+          "Rubric %d updated in place (%d competenc%s removed)",
+          selected_rid,
+          nrow(to_delete),
+          if (nrow(to_delete) == 1) "y" else "ies"
+        )
+      } else {
+        sprintf("Rubric %d updated in place", selected_rid)
+      },
       type = "message"
     )
   })

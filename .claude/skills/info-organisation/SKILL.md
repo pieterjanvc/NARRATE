@@ -70,6 +70,10 @@ needed.
   into the database
 - Relevant environment variables are set (mostly API keys or other passwords)
 
+NOTE: the `sqlife` package is a custom library to work with SQLite in R, and if
+there are issues with any of its functions, look for details in the GitHub repo
+at https://github.com/pieterjanvc/sqlife
+
 ## Human review
 
 Human reviewers use the `./inst/review_app.R` to review evaluations. They have
