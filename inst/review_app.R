@@ -180,6 +180,7 @@ ui <- page_fluid(
         card(
           card_header("Evaluation"),
           div(DTOutput("analysis_review_table")),
+          div(uiOutput("analysis_score_summary"), class = "mt-2"),
           div(
             class = "analysis-overlap-filters",
             mod_overlap_ui_filters(
@@ -1061,6 +1062,24 @@ server <- function(input, output, session) {
       ungroup() |>
       mutate(username = ifelse(is.na(username), "AI Model", username))
 
+    # Per-review scores, computed once per session. Incomplete reviews are
+    # expected here (this tab shows in-progress review groups), so
+    # error_on_incomplete = FALSE.
+    analysisScores <- review_scores(conn, ra$id, error_on_incomplete = FALSE) |>
+      mutate(total_frac = coverage + avg_specificity + utility) |>
+      left_join(
+        ra |> select(review_id = id, evaluation_id, rubric_id),
+        by = "review_id"
+      )
+
+    scoreSummary <- analysisScores |>
+      group_by(evaluation_id, rubric_id) |>
+      summarise(
+        avg_score = mean(total_frac, na.rm = TRUE) * 100,
+        sd_score = sd(total_frac, na.rm = TRUE) * 100,
+        .groups = "drop"
+      )
+
     reviewGroups <- ra |>
       group_by(evaluation_id, rubric_id) |>
       summarise(
@@ -1073,7 +1092,8 @@ server <- function(input, output, session) {
         },
         .groups = "drop"
       ) |>
-      mutate(perc = round(100 * n / total, 1))
+      mutate(perc = round(100 * n / total, 1)) |>
+      left_join(scoreSummary, by = c("evaluation_id", "rubric_id"))
 
     evalInfo <- tbl(conn, "evaluation") |>
       left_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
@@ -1097,6 +1117,8 @@ server <- function(input, output, session) {
         n,
         total,
         perc,
+        avg_score,
+        sd_score,
         completed_reviewers
       ) |>
       arrange(desc(evaluation_id))
@@ -1121,10 +1143,20 @@ server <- function(input, output, session) {
         df$n
       ),
       `%` = sprintf("%.1f", df$perc),
+      `Avg Score` = ifelse(
+        is.na(df$avg_score),
+        "—",
+        ifelse(
+          is.na(df$sd_score),
+          sprintf("%.1f", df$avg_score),
+          sprintf("%.1f ± %.1f", df$avg_score, df$sd_score)
+        )
+      ),
       eval_id_sort = df$evaluation_id,
       rubric_id_sort = df$rubric_id,
       n_sort = df$n,
       perc_sort = df$perc,
+      avg_score_sort = ifelse(is.na(df$avg_score), -1, df$avg_score),
       check.names = FALSE
     )
     datatable(
@@ -1139,11 +1171,12 @@ server <- function(input, output, session) {
         scrollX = TRUE,
         order = list(list(1, "desc"), list(2, "desc"), list(0, "asc")),
         columnDefs = list(
-          list(targets = 0, orderData = 8),
-          list(targets = 2, orderData = 9),
-          list(targets = 6, orderData = 10),
-          list(targets = 7, orderData = 11),
-          list(targets = c(8, 9, 10, 11), visible = FALSE)
+          list(targets = 0, orderData = 9),
+          list(targets = 2, orderData = 10),
+          list(targets = 6, orderData = 11),
+          list(targets = 7, orderData = 12),
+          list(targets = 8, orderData = 13),
+          list(targets = c(9, 10, 11, 12, 13), visible = FALSE)
         )
       )
     )
@@ -1155,6 +1188,41 @@ server <- function(input, output, session) {
     list(
       eval_id = analysisReviewData$evaluation_id[row],
       rubric_id = analysisReviewData$rubric_id[row]
+    )
+  })
+
+  output$analysis_score_summary <- renderUI({
+    sel <- selected_analysis_review()
+    scores <- analysisScores |>
+      filter(evaluation_id == sel$eval_id, rubric_id == sel$rubric_id)
+
+    if (nrow(scores) == 0) {
+      return(tags$p(
+        "No completed reviews yet for this evaluation.",
+        class = "text-muted"
+      ))
+    }
+
+    stat_pair <- function(x) {
+      c(mean = mean(x, na.rm = TRUE) * 100, sd = sd(x, na.rm = TRUE) * 100)
+    }
+    row <- function(label, s, header = FALSE) {
+      td_fn <- if (header) tags$th else tags$td
+      tags$tr(
+        td_fn(label),
+        td_fn(sprintf("%.1f", s["mean"])),
+        td_fn(if (is.na(s["sd"])) "" else sprintf("%.1f", s["sd"]))
+      )
+    }
+
+    tags$table(
+      class = "table table-sm mt-1",
+      tags$tbody(
+        row("Coverage", stat_pair(scores$coverage)),
+        row("Avg Specificity", stat_pair(scores$avg_specificity)),
+        row("Utility", stat_pair(scores$utility)),
+        row("Total", stat_pair(scores$total_frac), header = TRUE)
+      )
     )
   })
 

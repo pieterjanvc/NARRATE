@@ -117,3 +117,11 @@ be ignored.
 
 The `deployShinyApp` function in `R/helperFunctions.R` is the main function
 here.
+
+# Coding practices
+
+- Always try and use existing packages, or if looking for new ones go for
+  reputable and not too bloated ones. Good examples are Tidyverse.
+- When developing shiny apps, don't test by starting a server (e.g. chromium). A
+  human coder will do this unless specifically instructed. You can do checks for
+  syntax (parsing) and small tests for functions.
