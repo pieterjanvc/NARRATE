@@ -1,6 +1,6 @@
 Package: NARRATE
 Title: Narrative Assessment Review and Refinement using AI to support Teaching and Evaluation
-Version: 0.2.0
+Version: 0.2.1
 Authors@R: 
     person("PJ", "Van Camp", , "pjvancamp@hms.harvard.edu", role = c("aut", "cre"))
 Description: Build an artificial intelligence powered platform to analyze the 
@@ -39,3 +39,4 @@ Imports:
   stringr,
   sqlife
 Config/roxygen2/version: 8.0.0
+RoxygenNote: 7.3.3

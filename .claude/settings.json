@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Rscript -e 'devtools::document\\(\\); devtools::load_all\\(\".\", quiet = TRUE\\); cat\\(\"OK\\\\n\"\\)')",
+      "Bash(Rscript -e ' *)",
+      "Bash(Rscript -e 'devtools::load_all\\(\".\", quiet = TRUE\\); library\\(shiny\\); html <- as.character\\(mod_overlap_ui_text\\(\"test\"\\)\\); cat\\(gsub\\(\".*<script>|</script>.*\", \"\", html, perl=TRUE\\)\\)')",
+      "Bash(node -e ' *)",
+      "Bash(node --check /tmp/overlap_check.js)"
+    ]
+  }
+}

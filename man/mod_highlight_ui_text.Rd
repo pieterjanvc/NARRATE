@@ -13,7 +13,7 @@ mod_highlight_ui_text(id)
 Shiny UI element
 }
 \description{
-Contains only a \code{\link[shiny:uiOutput]{uiOutput()}} that the paired \code{\link[=mod_highlight_server]{mod_highlight_server()}}
+Contains only a \code{\link[shiny:htmlOutput]{shiny::uiOutput()}} that the paired \code{\link[=mod_highlight_server]{mod_highlight_server()}}
 renders the source text into (with highlight \verb{<span>}s injected around
 the currently saved selections). Also carries the selection-capture script,
 since it needs to reference this element's own container id directly.
