@@ -5,7 +5,8 @@
       "Bash(Rscript -e ' *)",
       "Bash(Rscript -e 'devtools::load_all\\(\".\", quiet = TRUE\\); library\\(shiny\\); html <- as.character\\(mod_overlap_ui_text\\(\"test\"\\)\\); cat\\(gsub\\(\".*<script>|</script>.*\", \"\", html, perl=TRUE\\)\\)')",
       "Bash(node -e ' *)",
-      "Bash(node --check /tmp/overlap_check.js)"
+      "Bash(node --check /tmp/overlap_check.js)",
+      "Bash(Rscript -e 'tryCatch\\({parse\\(\"inst/review_app.R\"\\); cat\\(\"OK: syntax valid\\\\n\"\\)}, error = function\\(e\\) {cat\\(\"PARSE ERROR:\\\\n\"\\); print\\(e\\)}\\)')"
     ]
   }
 }

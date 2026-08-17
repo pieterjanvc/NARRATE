@@ -116,8 +116,21 @@ mod_overlap_ui_text <- function(id) {
       if (!span || !container.contains(span)) return;
       var table = span.querySelector('.overlap-hover-table');
       if (!table) return;
-      table.style.left = (e.clientX + 12) + 'px';
-      table.style.top = (e.clientY + 12) + 'px';
+
+      var offset = 12;
+      // The table is already `display: block` at this point (:hover is
+      // resolved before the mousemove handler runs), so offsetWidth
+      // reflects its real rendered size. Flip to the cursor's left when
+      // the default right-hand placement would run past the viewport
+      // edge, so the table doesn't get squeezed/clipped against the
+      // right side of the screen.
+      var width = table.offsetWidth;
+      var left = width && e.clientX + offset + width > window.innerWidth
+        ? e.clientX - offset - width
+        : e.clientX + offset;
+
+      table.style.left = left + 'px';
+      table.style.top = (e.clientY + offset) + 'px';
     });
   })();
   ",

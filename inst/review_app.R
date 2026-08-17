@@ -9,8 +9,8 @@ library(DT)
 library(sqlife)
 
 
-# dbInfo <- "../local/narrate.db"
-dbInfo <- "../local/test.db"
+dbInfo <- "../local/narrate.db"
+# dbInfo <- "../local/test.db"
 # dbInfo <- "~/Downloads/narrate.db"
 
 # This is the db used during deployment, see deployShinyApp()
@@ -53,6 +53,12 @@ ui <- page_fluid(
     /* DT selected row colour */
     :root {
     --dt-row-selected: 224, 168, 78;
+    }
+    /* mod_overlap_ui_filters() has no width= param, so its selects fall
+       back to Shiny's default 300px .shiny-input-container width */
+    .analysis-overlap-filters .shiny-input-container {
+      width: 100%;
+      max-width: 100%;
     }
     .tooltip .tooltip-inner {
       max-width: 300px;
@@ -179,7 +185,18 @@ ui <- page_fluid(
             choices = c(),
             width = "100%"
           ),
-          uiOutput("analysis_evaluation")
+          div(
+            class = "analysis-overlap-filters",
+            mod_overlap_ui_filters(
+              "analysis_overlap",
+              group_label = "Competency",
+              user_label = "Reviewer"
+            )
+          ),
+          div(
+            mod_overlap_ui_text("analysis_overlap"),
+            style = "max-height: 40vh; overflow-y: auto;"
+          )
         )
       ),
       uiOutput("textMatches"),
@@ -303,6 +320,21 @@ server <- function(input, output, session) {
     arrange(order) |>
     select(competency_id, comp_order = order, name, description, note) |>
     collect()
+
+  # Global id -> name lookups for mod_overlap on the ANALYSIS tab. Built from
+  # the full tables (not scoped to the latest rubric) since an evaluation may
+  # have been reviewed under an older rubric version, and mod_overlap's
+  # group_names/user_names are captured once, non-reactively.
+  all_competency_names <- tbl(conn, "competency") |>
+    select(id, name) |>
+    collect() |>
+    (\(x) setNames(x$name, as.character(x$id)))()
+
+  all_reviewer_names <- tbl(conn, "reviewer") |>
+    select(id, username) |>
+    collect() |>
+    mutate(username = ifelse(is.na(username), "AI Model", username)) |>
+    (\(x) setNames(x$username, as.character(x$id)))()
 
   specificity_opts <- tbl(conn, "specificity") |>
     collect() |>
@@ -1051,24 +1083,6 @@ server <- function(input, output, session) {
     )
   )
 
-  output$analysis_evaluation <- renderUI({
-    req(input$analysis_evalID)
-    div(
-      HTML(
-        dbGetEvals(
-          ids = as.integer(input$analysis_evalID),
-          conn = conn,
-          redacted = T,
-          includeQuestions = T,
-          html = T,
-          subtitleTag = "b"
-        ) |>
-          pull(evaluation)
-      ),
-      style = "max-height: 40vh; overflow-y: auto;"
-    )
-  })
-
   analysisInfo <- reactive({
     overall <- tbl(conn, "review_assignment") |>
       filter(evaluation_id == as.integer(input$analysis_evalID)) |>
@@ -1102,6 +1116,41 @@ server <- function(input, output, session) {
       compText = compText
     )
   })
+
+  overlapHighlights <- reactive({
+    info <- analysisInfo()
+    info$compText |>
+      left_join(
+        info$compInfo |> select(competency_score_id = id, competency_id),
+        by = "competency_score_id"
+      ) |>
+      transmute(
+        id = id,
+        user_id = as.character(reviewer_id),
+        group_id = as.character(competency_id),
+        start = start,
+        end = end
+      )
+  })
+
+  mod_overlap_server(
+    "analysis_overlap",
+    highlights = overlapHighlights,
+    group_names = all_competency_names,
+    user_names = all_reviewer_names,
+    text = reactive({
+      req(input$analysis_evalID)
+      dbGetEvals(
+        ids = as.integer(input$analysis_evalID),
+        conn = conn,
+        redacted = T,
+        includeQuestions = T,
+        html = T,
+        subtitleTag = "b"
+      ) |>
+        pull(evaluation)
+    })
+  )
 
   comparisonTable <- reactive({
     info <- analysisInfo()
