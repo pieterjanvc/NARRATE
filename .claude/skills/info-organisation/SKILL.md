@@ -1,6 +1,6 @@
 ---
 name: info-organisation
-description: Overview of what this project is about, organisation of the repo, and best practices. To be used whenever a new feature is being added, or changes are made to existing workflows.
+description: Overview of what this project is about, organisation of the repo, and best practices. To be used whenever a new feature is being added, or changes are made to existing core files in the R/ or inst/ folders.
 ---
 
 # Important terminology

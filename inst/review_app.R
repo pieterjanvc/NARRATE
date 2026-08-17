@@ -179,12 +179,7 @@ ui <- page_fluid(
       layout_columns(
         card(
           card_header("Evaluation"),
-          selectInput(
-            "analysis_evalID",
-            "Select a review to compare",
-            choices = c(),
-            width = "100%"
-          ),
+          div(DTOutput("analysis_review_table")),
           div(
             class = "analysis-overlap-filters",
             mod_overlap_ui_filters(
@@ -1051,41 +1046,122 @@ server <- function(input, output, session) {
 
   #### ANALYSIS TAB ####
 
-  # Populate the review dropdown
-  reviewInfo <- tbl(conn, "review_assignment") |>
-    left_join(
-      tbl(conn, "reviewer") |> select(reviewer_id = id, human),
-      by = "reviewer_id"
-    ) |>
-    group_by(evaluation_id, reviewer_id) |>
-    filter(modified == max(modified)) |>
-    group_by(evaluation_id) |>
-    # filter(any(statusCode > 0)) |> # Add once out of dev
-    summarise(
-      nAI = n() - sum(human),
-      nHuman = sum(human),
-      nComplete = sum(statusCode %in% local(ra_done_codes))
-    ) |>
-    ungroup() |>
-    collect()
+  # One row per (evaluation, rubric) review round — an evaluation reviewed
+  # under two rubric versions shows up as two separate rows, so analysis
+  # never mixes completion stats or reviewer scores across rubric versions.
+  analysisReviewData <- {
+    ra <- tbl(conn, "review_assignment") |>
+      left_join(
+        tbl(conn, "reviewer") |> select(reviewer_id = id, human, username),
+        by = "reviewer_id"
+      ) |>
+      collect() |>
+      group_by(evaluation_id, reviewer_id, rubric_id) |>
+      filter(modified == max(modified)) |>
+      ungroup() |>
+      mutate(username = ifelse(is.na(username), "AI Model", username))
 
-  updateSelectInput(
-    session,
-    "analysis_evalID",
-    choices = setNames(
-      reviewInfo$evaluation_id,
-      sprintf(
-        "%i - %i/%i completed",
-        reviewInfo$evaluation_id,
-        reviewInfo$nComplete,
-        reviewInfo$nAI + reviewInfo$nHuman
+    reviewGroups <- ra |>
+      group_by(evaluation_id, rubric_id) |>
+      summarise(
+        assign_date = format(as.Date(min(created)), "%Y-%m-%d"),
+        n = sum(statusCode %in% ra_done_codes),
+        total = n(),
+        completed_reviewers = {
+          done <- sort(unique(username[statusCode %in% ra_done_codes]))
+          if (length(done) == 0) "None" else paste(done, collapse = ", ")
+        },
+        .groups = "drop"
+      ) |>
+      mutate(perc = round(100 * n / total, 1))
+
+    evalInfo <- tbl(conn, "evaluation") |>
+      left_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
+      left_join(tbl(conn, "clerkship"), by = c("clerkship_id" = "id")) |>
+      select(id, summary_flg, clerkship, core_faculty) |>
+      collect()
+
+    reviewGroups |>
+      left_join(evalInfo, by = c("evaluation_id" = "id")) |>
+      mutate(
+        type = ifelse(summary_flg == 1, "summative", "formative"),
+        core_faculty = !is.na(core_faculty) & core_faculty == 1
+      ) |>
+      select(
+        evaluation_id,
+        assign_date,
+        rubric_id,
+        type,
+        clerkship,
+        core_faculty,
+        n,
+        total,
+        perc,
+        completed_reviewers
+      ) |>
+      arrange(desc(evaluation_id))
+  }
+
+  # Columns whose visible cell is a formatted string (for a plain text filter
+  # box instead of DT's default range-slider on numeric columns) each carry a
+  # hidden twin holding the raw numeric value, linked via columnDefs orderData
+  # so sorting/ordering still works correctly.
+  output$analysis_review_table <- renderDT({
+    df <- analysisReviewData
+    display <- data.frame(
+      `Eval ID` = as.character(df$evaluation_id),
+      `Assign Date` = df$assign_date,
+      `Rubric ID` = as.character(df$rubric_id),
+      Type = df$type,
+      Clerkship = df$clerkship,
+      `Core Faculty` = df$core_faculty,
+      N = sprintf(
+        '<span title="%s">%d</span>',
+        htmltools::htmlEscape(df$completed_reviewers),
+        df$n
+      ),
+      `%` = sprintf("%.1f", df$perc),
+      eval_id_sort = df$evaluation_id,
+      rubric_id_sort = df$rubric_id,
+      n_sort = df$n,
+      perc_sort = df$perc,
+      check.names = FALSE
+    )
+    datatable(
+      display,
+      selection = "single",
+      rownames = FALSE,
+      escape = -match("N", names(display)),
+      filter = list(position = 'top', clear = FALSE, plain = FALSE),
+      options = list(
+        pageLength = 15,
+        dom = "tip",
+        scrollX = TRUE,
+        order = list(list(1, "desc"), list(2, "desc"), list(0, "asc")),
+        columnDefs = list(
+          list(targets = 0, orderData = 8),
+          list(targets = 2, orderData = 9),
+          list(targets = 6, orderData = 10),
+          list(targets = 7, orderData = 11),
+          list(targets = c(8, 9, 10, 11), visible = FALSE)
+        )
       )
     )
-  )
+  })
+
+  selected_analysis_review <- reactive({
+    row <- input$analysis_review_table_rows_selected
+    req(row)
+    list(
+      eval_id = analysisReviewData$evaluation_id[row],
+      rubric_id = analysisReviewData$rubric_id[row]
+    )
+  })
 
   analysisInfo <- reactive({
+    sel <- selected_analysis_review()
     overall <- tbl(conn, "review_assignment") |>
-      filter(evaluation_id == as.integer(input$analysis_evalID)) |>
+      filter(evaluation_id == sel$eval_id, rubric_id == sel$rubric_id) |>
       left_join(
         tbl(conn, "reviewer") |>
           select(reviewer_id = id, reviewer = username),
@@ -1139,9 +1215,8 @@ server <- function(input, output, session) {
     group_names = all_competency_names,
     user_names = all_reviewer_names,
     text = reactive({
-      req(input$analysis_evalID)
       dbGetEvals(
-        ids = as.integer(input$analysis_evalID),
+        ids = selected_analysis_review()$eval_id,
         conn = conn,
         redacted = T,
         includeQuestions = T,
