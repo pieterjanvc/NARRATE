@@ -1265,7 +1265,8 @@ server <- function(input, output, session) {
     info <- analysisInfo()
     info$compText |>
       left_join(
-        info$compInfo |> select(competency_score_id = id, competency_id),
+        info$compInfo |>
+          select(competency_score_id = id, competency_id, score = specificity, note),
         by = "competency_score_id"
       ) |>
       transmute(
@@ -1273,7 +1274,9 @@ server <- function(input, output, session) {
         user_id = as.character(reviewer_id),
         group_id = as.character(competency_id),
         start = start,
-        end = end
+        end = end,
+        score = score,
+        note = note
       )
   })
 

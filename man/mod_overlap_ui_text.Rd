@@ -25,8 +25,10 @@ of the default text color, layering the conflict signal on top of the
 user-count scale rather than replacing it.
 }
 \details{
-Hovering a span reveals a small table (user, group) of everyone covering
-that segment. Showing/hiding it is pure CSS (a hidden table baked into
+Hovering a span reveals a small table (user, group, plus any extra
+columns present on the \code{highlights} data frame passed to
+\code{\link[=mod_overlap_server]{mod_overlap_server()}}, e.g. \code{score}/\code{note}) of everyone covering that
+segment. Showing/hiding it is pure CSS (a hidden table baked into
 the span, revealed via \verb{:hover}) and never round-trips through Shiny; a
 small scoped script only \emph{positions} the table (\code{position: fixed},
 tracking the cursor via \code{mousemove}) so it isn't clipped by a scrollable

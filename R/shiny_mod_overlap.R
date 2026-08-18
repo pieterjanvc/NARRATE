@@ -53,8 +53,10 @@ mod_overlap_ui_filters <- function(id, group_label = "Group", user_label = "User
 #' of the default text color, layering the conflict signal on top of the
 #' user-count scale rather than replacing it.
 #'
-#' Hovering a span reveals a small table (user, group) of everyone covering
-#' that segment. Showing/hiding it is pure CSS (a hidden table baked into
+#' Hovering a span reveals a small table (user, group, plus any extra
+#' columns present on the `highlights` data frame passed to
+#' [mod_overlap_server()], e.g. `score`/`note`) of everyone covering that
+#' segment. Showing/hiding it is pure CSS (a hidden table baked into
 #' the span, revealed via `:hover`) and never round-trips through Shiny; a
 #' small scoped script only *positions* the table (`position: fixed`,
 #' tracking the cursor via `mousemove`) so it isn't clipped by a scrollable
@@ -199,10 +201,36 @@ mod_overlap_interpolate_color <- function(nUsers, totalUsers) {
   sprintf("#%02x%02x%02x", rgb[1], rgb[2], rgb[3])
 }
 
+#' Internal function to derive a hover-table column header from its name
+#'
+#' `user_name`/`group_name` map to the fixed "User"/"Group" headers used
+#' since before extra columns existed; any other column name is
+#' auto-labeled by splitting on `_` and title-casing each word (e.g. `note`
+#' -> "Note", `review_score` -> "Review Score").
+#'
+#' @param col A single column name
+#'
+#' @returns A single display label string
+#'
+mod_overlap_column_label <- function(col) {
+  fixed <- c(user_name = "User", group_name = "Group")
+  if (col %in% names(fixed)) {
+    return(unname(fixed[col]))
+  }
+  words <- strsplit(gsub("_", " ", col), " ", fixed = TRUE)[[1]]
+  paste0(toupper(substring(words, 1, 1)), substring(words, 2), collapse = " ")
+}
+
 #' Internal function to render a hover-table's HTML
 #'
-#' @param hoverRows Data frame with columns `user_name`, `group_name`, one
-#' row per distinct covering (user, group) pair
+#' Builds a `<table>` with one column per `hoverRows` column (not just the
+#' fixed `user_name`/`group_name`), so callers can pass any number of extra
+#' columns (e.g. `score`, `note`) through [mod_overlap_compute_segments()]
+#' and have them show up here automatically. Headers come from
+#' [mod_overlap_column_label()]; `NA` values render as an empty cell.
+#'
+#' @param hoverRows Data frame with columns `user_name`, `group_name`, plus
+#' any extra columns, one row per distinct covering (user, group, ...) combo
 #'
 #' @returns Character string, a `<table>` (empty string if `hoverRows` has
 #' no rows)
@@ -211,17 +239,32 @@ mod_overlap_hover_table_html <- function(hoverRows) {
   if (nrow(hoverRows) == 0) {
     return("")
   }
-  rowsHtml <- paste0(
-    "<tr><td>",
-    mod_overlap_html_escape(hoverRows$user_name),
-    "</td><td>",
-    mod_overlap_html_escape(hoverRows$group_name),
-    "</td></tr>",
+  cols <- names(hoverRows)
+  headerHtml <- paste0(
+    "<th>",
+    mod_overlap_html_escape(vapply(cols, mod_overlap_column_label, character(1))),
+    "</th>",
     collapse = ""
   )
+
+  cellText <- lapply(hoverRows, function(col) {
+    col <- as.character(col)
+    ifelse(is.na(col), "", col)
+  })
+  rowsHtml <- vapply(seq_len(nrow(hoverRows)), function(i) {
+    cells <- vapply(cellText, `[`, character(1), i)
+    paste0(
+      "<tr><td>",
+      paste(mod_overlap_html_escape(cells), collapse = "</td><td>"),
+      "</td></tr>"
+    )
+  }, character(1))
+
   paste0(
-    "<table><tr><th>User</th><th>Group</th></tr>",
-    rowsHtml,
+    "<table><tr>",
+    headerHtml,
+    "</tr>",
+    paste(rowsHtml, collapse = ""),
     "</table>"
   )
 }
@@ -245,7 +288,10 @@ mod_overlap_hover_table_html <- function(hoverRows) {
 #' containment check (`start <= lo & end >= hi`) is sufficient.
 #'
 #' @param df Data frame with columns `user_id`, `group_id`, `start`, `end`
-#' (integer, half-open, `start < end`, no `NA`s)
+#' (integer, half-open, `start < end`, no `NA`s), plus any extra columns
+#' (e.g. `score`, `note`) - anything beyond `id`, `user_id`, `group_id`,
+#' `start`, `end` is carried through into each segment's hover table as an
+#' additional column (see [mod_overlap_hover_table_html()])
 #' @param totalUsers Total distinct users in the unfiltered highlights input
 #' @param group_names (Optional) Named vector, `group_id` -> display name
 #' @param user_names (Optional) Named vector, `user_id` -> display name
@@ -266,6 +312,8 @@ mod_overlap_compute_segments <- function(df, totalUsers, group_names, user_names
     return(list())
   }
 
+  extraCols <- setdiff(names(df), c("id", "user_id", "group_id", "start", "end"))
+
   segments <- list()
   for (i in seq_len(length(breaks) - 1L)) {
     lo <- breaks[i]
@@ -276,7 +324,10 @@ mod_overlap_compute_segments <- function(df, totalUsers, group_names, user_names
       next
     }
 
-    pairs <- unique(covering[, c("user_id", "group_id")])
+    # Deduping on the extra columns too (not just user_id/group_id) means a
+    # pair that genuinely disagrees on e.g. `score` shows up as separate
+    # hover rows rather than silently collapsing to one arbitrary value.
+    pairs <- unique(covering[, c("user_id", "group_id", extraCols), drop = FALSE])
     nUsers <- length(unique(pairs$user_id))
     nGroups <- length(unique(pairs$group_id))
 
@@ -288,6 +339,9 @@ mod_overlap_compute_segments <- function(df, totalUsers, group_names, user_names
       group_name = mod_overlap_display_name(pairs$group_id, group_names),
       stringsAsFactors = FALSE
     )
+    if (length(extraCols) > 0) {
+      hoverRows <- cbind(hoverRows, pairs[, extraCols, drop = FALSE])
+    }
 
     segments[[length(segments) + 1L]] <- list(
       start = lo,
@@ -413,7 +467,12 @@ mod_overlap_build_html <- function(txt, segments) {
 #' dropped before rendering and before computing the color scale's
 #' denominator (treated as malformed, not as zero-length-valid highlights).
 #' `id` is not relied upon internally (only `(user_id, group_id)` pairs are
-#' deduped) so it need not be unique across users.
+#' deduped) so it need not be unique across users. Any columns beyond `id`,
+#' `user_id`, `group_id`, `start`, `end` (e.g. `score`, `note`) are treated
+#' as extra data and automatically added as additional columns in each
+#' span's hover table, with a header auto-derived from the column name (see
+#' [mod_overlap_hover_table_html()]) - no further wiring needed to surface a
+#' new column.
 #' @param group_names (Optional) A named vector, `group_id` -> display name,
 #' used both for the group filter select's labels and the `group_name`
 #' column in each span's hover table. `group_id` values with no entry here

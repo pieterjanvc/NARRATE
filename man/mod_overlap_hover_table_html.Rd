@@ -7,13 +7,17 @@
 mod_overlap_hover_table_html(hoverRows)
 }
 \arguments{
-\item{hoverRows}{Data frame with columns \code{user_name}, \code{group_name}, one
-row per distinct covering (user, group) pair}
+\item{hoverRows}{Data frame with columns \code{user_name}, \code{group_name}, plus
+any extra columns, one row per distinct covering (user, group, ...) combo}
 }
 \value{
 Character string, a \verb{<table>} (empty string if \code{hoverRows} has
 no rows)
 }
 \description{
-Internal function to render a hover-table's HTML
+Builds a \verb{<table>} with one column per \code{hoverRows} column (not just the
+fixed \code{user_name}/\code{group_name}), so callers can pass any number of extra
+columns (e.g. \code{score}, \code{note}) through \code{\link[=mod_overlap_compute_segments]{mod_overlap_compute_segments()}}
+and have them show up here automatically. Headers come from
+\code{\link[=mod_overlap_column_label]{mod_overlap_column_label()}}; \code{NA} values render as an empty cell.
 }

@@ -20,7 +20,12 @@ module's convention. Rows with \code{start >= end} or \code{NA} \code{start}/\co
 dropped before rendering and before computing the color scale's
 denominator (treated as malformed, not as zero-length-valid highlights).
 \code{id} is not relied upon internally (only \verb{(user_id, group_id)} pairs are
-deduped) so it need not be unique across users.}
+deduped) so it need not be unique across users. Any columns beyond \code{id},
+\code{user_id}, \code{group_id}, \code{start}, \code{end} (e.g. \code{score}, \code{note}) are treated
+as extra data and automatically added as additional columns in each
+span's hover table, with a header auto-derived from the column name (see
+\code{\link[=mod_overlap_hover_table_html]{mod_overlap_hover_table_html()}}) - no further wiring needed to surface a
+new column.}
 
 \item{group_names}{(Optional) A named vector, \code{group_id} -> display name,
 used both for the group filter select's labels and the \code{group_name}

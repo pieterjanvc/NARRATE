@@ -8,7 +8,10 @@ mod_overlap_compute_segments(df, totalUsers, group_names, user_names)
 }
 \arguments{
 \item{df}{Data frame with columns \code{user_id}, \code{group_id}, \code{start}, \code{end}
-(integer, half-open, \code{start < end}, no \code{NA}s)}
+(integer, half-open, \code{start < end}, no \code{NA}s), plus any extra columns
+(e.g. \code{score}, \code{note}) - anything beyond \code{id}, \code{user_id}, \code{group_id},
+\code{start}, \code{end} is carried through into each segment's hover table as an
+additional column (see \code{\link[=mod_overlap_hover_table_html]{mod_overlap_hover_table_html()}})}
 
 \item{totalUsers}{Total distinct users in the unfiltered highlights input}
 

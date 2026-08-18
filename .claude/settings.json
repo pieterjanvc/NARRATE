@@ -11,7 +11,9 @@
       "Read(//.claude/projects/-home-pj-LocalGit-CFME/memory/**)",
       "Bash(find / -maxdepth 0)",
       "Bash(Rscript -e 'parse\\(\"R/helperFunctions.R\"\\); cat\\(\"OK\\\\n\"\\)')",
-      "Bash(Rscript -e 'parse\\(\"inst/review_app.R\"\\); cat\\(\"OK\\\\n\"\\)')"
+      "Bash(Rscript -e 'parse\\(\"inst/review_app.R\"\\); cat\\(\"OK\\\\n\"\\)')",
+      "Bash(Rscript -e 'devtools::document\\(\".\"\\)')",
+      "Bash(git check-ignore *)"
     ]
   }
 }
