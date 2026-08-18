@@ -696,11 +696,17 @@ server <- function(input, output, session) {
 
       # Specificity score options — loaded from the rubric attached to this review
       rr_opts <- review_rubric_opts()
+      curCompScore <- compScores |>
+        filter(competency_id == as.integer(input$cID))
       updateRadioButtons(
         inputId = "specificity",
         label = examples_label("Specificity score", rr_opts$specificity),
         choices = score_choices(rr_opts$specificity),
-        selected = NULL
+        selected = if (nrow(curCompScore) == 1) {
+          curCompScore$specificity
+        } else {
+          character(0)
+        }
       )
 
       # Overall scores
