@@ -6,7 +6,12 @@
       "Bash(Rscript -e 'devtools::load_all\\(\".\", quiet = TRUE\\); library\\(shiny\\); html <- as.character\\(mod_overlap_ui_text\\(\"test\"\\)\\); cat\\(gsub\\(\".*<script>|</script>.*\", \"\", html, perl=TRUE\\)\\)')",
       "Bash(node -e ' *)",
       "Bash(node --check /tmp/overlap_check.js)",
-      "Bash(Rscript -e 'tryCatch\\({parse\\(\"inst/review_app.R\"\\); cat\\(\"OK: syntax valid\\\\n\"\\)}, error = function\\(e\\) {cat\\(\"PARSE ERROR:\\\\n\"\\); print\\(e\\)}\\)')"
+      "Bash(Rscript -e 'tryCatch\\({parse\\(\"inst/review_app.R\"\\); cat\\(\"OK: syntax valid\\\\n\"\\)}, error = function\\(e\\) {cat\\(\"PARSE ERROR:\\\\n\"\\); print\\(e\\)}\\)')",
+      "Bash(Rscript -e 'invisible\\(parse\\(\"dev/AI_review.R\"\\)\\)')",
+      "Read(//.claude/projects/-home-pj-LocalGit-CFME/memory/**)",
+      "Bash(find / -maxdepth 0)",
+      "Bash(Rscript -e 'parse\\(\"R/helperFunctions.R\"\\); cat\\(\"OK\\\\n\"\\)')",
+      "Bash(Rscript -e 'parse\\(\"inst/review_app.R\"\\); cat\\(\"OK\\\\n\"\\)')"
     ]
   }
 }

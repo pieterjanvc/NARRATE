@@ -1462,6 +1462,14 @@ server <- function(input, output, session) {
       } else {
         showNotification(check$msg, type = "error")
       }
+
+      if ("import" %in% pinAction && check$success) {
+        # The connection opened at app start still points at the replaced
+        # file, so reload the session to pick up the freshly imported DB
+        removeModal()
+        session$reload()
+        return()
+      }
     }
 
     removeModal()
@@ -2163,6 +2171,11 @@ server <- function(input, output, session) {
         c("value", "description", "example", "note")
       )
     }
+
+    # Competency/rule/score edits change what the extraction/scoring prompts
+    # should say, so regenerate and relink them to keep the stored prompt
+    # text in sync with the rubric's current content.
+    rubric_link_prompts(conn, selected_rid)
 
     rubric_refresh_trigger(rubric_refresh_trigger() + 1)
     showNotification(

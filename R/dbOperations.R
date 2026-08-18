@@ -801,6 +801,14 @@ dbCompExtraction <- function(
     order_map$comp_order
   )]
 
+  # A cIndex the LLM returned may not exist in the rubric's current
+  # competency set (e.g. it was removed after the prompt was generated, or
+  # the LLM hallucinated an out-of-range index) - reject rather than insert
+  # a NULL competency_id.
+  if (anyNA(new_comp_ids)) {
+    return(list(success = FALSE))
+  }
+
   # Get existing competency_score entries for this review_assignment_id
   existing_scores <- tbl(conn, "competency_score") |>
     filter(review_assignment_id == local(ra_id)) |>
@@ -915,6 +923,231 @@ dbCompExtraction <- function(
   }
 
   return(result)
+}
+
+#' Internal: filter a collected data frame to rows whose id is not already
+#' present in a target table
+#'
+#' @param data Data frame with an id column, already collected from the
+#'   source database
+#' @param conn Target database connection
+#' @param table Name of the target table to check for existing ids
+#'
+#' @import dplyr
+dbRowsMissing <- function(data, conn, table) {
+  if (nrow(data) == 0) {
+    return(data)
+  }
+  existing <- tbl(conn, table) |>
+    filter(id %in% local(data$id)) |>
+    pull(id)
+  filter(data, !id %in% existing)
+}
+
+#' Merge completed reviews from a local database into a target database
+#'
+#' For a given set of \code{review_assignment} IDs in a local NARRATE
+#' database, copies the "completed" ones into a target NARRATE database,
+#' along with everything new they depend on (reviewer, rubric + its prompt /
+#' composition rows, batch provenance). IDs are preserved as-is: both
+#' databases are expected to share the same ID space (i.e. \code{targetDbPath}
+#' is an ancestor/descendant of \code{localDbPath} via a prior pin sync), so
+#' no re-keying is attempted. Any row that already exists in the target (by
+#' id) is left untouched.
+#'
+#' Reference/seed tables (evaluation, competency, specificity, utility,
+#' sentiment, rule, student, clerkship, rotation, answer, question) are
+#' assumed already identical between the two databases and are not copied.
+#'
+#' @param localDbPath Path to the local NARRATE database containing the new review results
+#' @param targetDbPath Path to the target NARRATE database to merge into (modified in place)
+#' @param review_ids Integer vector of review_assignment IDs (from the local db) to merge
+#' @param statusCodes review_assignment statusCode values considered "completed"
+#'   (default \code{c(2, -1, 5)}: completed, completed with flag, batch scoring complete)
+#' @param show_warnings (Default = TRUE) Emit a \code{warning()} for review_ids
+#'   that are skipped because they don't exist locally, aren't completed, or
+#'   already exist in the target
+#'
+#' @import dplyr
+#' @importFrom sqlife dbGetConn dbFinish tbl_insert
+#' @importFrom stats na.omit
+#'
+#' @returns A list with \code{inserted} (named integer vector of rows
+#'   inserted per table, zero-count tables omitted), \code{skipped}
+#'   (review_ids that already existed in the target), and \code{excluded}
+#'   (a list with \code{not_found} and \code{not_completed} review_ids)
+#' @export
+dbMergeReviews <- function(
+  localDbPath,
+  targetDbPath,
+  review_ids,
+  statusCodes = c(2, -1, 5),
+  show_warnings = TRUE
+) {
+  localConn <- dbGetConn(localDbPath)
+  targetConn <- dbGetConn(targetDbPath)
+
+  ra <- tbl(localConn, "review_assignment") |>
+    filter(id %in% local(review_ids)) |>
+    collect()
+
+  not_found <- setdiff(review_ids, ra$id)
+  if (show_warnings && length(not_found) > 0) {
+    warning(
+      length(not_found), " review_id(s) not found in the local database: ",
+      paste(not_found, collapse = ", ")
+    )
+  }
+
+  not_completed <- ra$id[!ra$statusCode %in% statusCodes]
+  if (show_warnings && length(not_completed) > 0) {
+    warning(
+      length(not_completed), " review_id(s) skipped (not completed): ",
+      paste(not_completed, collapse = ", ")
+    )
+  }
+  ra <- filter(ra, statusCode %in% statusCodes)
+
+  skipped <- tbl(targetConn, "review_assignment") |>
+    filter(id %in% local(ra$id)) |>
+    pull(id)
+  if (show_warnings && length(skipped) > 0) {
+    warning(
+      length(skipped), " review_id(s) skipped (already present in target): ",
+      paste(skipped, collapse = ", ")
+    )
+  }
+  ra <- filter(ra, !id %in% skipped)
+
+  inserted <- c(
+    prompt = 0L,
+    rubric = 0L,
+    rubric_competency = 0L,
+    rubric_specificity = 0L,
+    rubric_utility = 0L,
+    rubric_sentiment = 0L,
+    rubric_rule = 0L,
+    reviewer = 0L,
+    batch = 0L,
+    review_assignment = 0L,
+    competency_score = 0L,
+    competency_text = 0L,
+    batch_review = 0L
+  )
+
+  if (nrow(ra) > 0) {
+    # --- reviewer
+    reviewer <- tbl(localConn, "reviewer") |>
+      filter(id %in% local(unique(ra$reviewer_id))) |>
+      collect() |>
+      dbRowsMissing(targetConn, "reviewer")
+    if (nrow(reviewer) > 0) {
+      tbl_insert(reviewer, targetConn, "reviewer", commit = F)
+      inserted["reviewer"] <- nrow(reviewer)
+    }
+
+    # --- rubric (+ prompt + composition, only for rubrics new to target)
+    rubric <- tbl(localConn, "rubric") |>
+      filter(id %in% local(unique(ra$rubric_id))) |>
+      collect() |>
+      dbRowsMissing(targetConn, "rubric")
+
+    if (nrow(rubric) > 0) {
+      prompt_ids <- unique(na.omit(c(
+        rubric$prompt_extract_id,
+        rubric$prompt_score_id
+      )))
+      prompt <- tbl(localConn, "prompt") |>
+        filter(id %in% local(prompt_ids)) |>
+        collect() |>
+        dbRowsMissing(targetConn, "prompt")
+      if (nrow(prompt) > 0) {
+        tbl_insert(prompt, targetConn, "prompt", commit = F)
+        inserted["prompt"] <- inserted["prompt"] + nrow(prompt)
+      }
+
+      tbl_insert(rubric, targetConn, "rubric", commit = F)
+      inserted["rubric"] <- nrow(rubric)
+
+      for (rubricTbl in c(
+        "rubric_competency",
+        "rubric_specificity",
+        "rubric_utility",
+        "rubric_sentiment",
+        "rubric_rule"
+      )) {
+        rows <- tbl(localConn, rubricTbl) |>
+          filter(rubric_id %in% local(rubric$id)) |>
+          collect() |>
+          dbRowsMissing(targetConn, rubricTbl)
+        if (nrow(rows) > 0) {
+          tbl_insert(rows, targetConn, rubricTbl, commit = F)
+          inserted[rubricTbl] <- nrow(rows)
+        }
+      }
+    }
+
+    # --- review_assignment
+    tbl_insert(ra, targetConn, "review_assignment", commit = F)
+    inserted["review_assignment"] <- nrow(ra)
+
+    # --- competency_score / competency_text
+    cs <- tbl(localConn, "competency_score") |>
+      filter(review_assignment_id %in% local(ra$id)) |>
+      collect()
+    if (nrow(cs) > 0) {
+      tbl_insert(cs, targetConn, "competency_score", commit = F)
+      inserted["competency_score"] <- nrow(cs)
+
+      ct <- tbl(localConn, "competency_text") |>
+        filter(competency_score_id %in% local(cs$id)) |>
+        collect()
+      if (nrow(ct) > 0) {
+        tbl_insert(ct, targetConn, "competency_text", commit = F)
+        inserted["competency_text"] <- nrow(ct)
+      }
+    }
+
+    # --- batch / batch_review provenance
+    br <- tbl(localConn, "batch_review") |>
+      filter(review_assignment_id %in% local(ra$id)) |>
+      collect()
+    if (nrow(br) > 0) {
+      batch <- tbl(localConn, "batch") |>
+        filter(id %in% local(unique(br$batch_id))) |>
+        collect() |>
+        dbRowsMissing(targetConn, "batch")
+
+      if (nrow(batch) > 0) {
+        batchPromptIds <- unique(na.omit(batch$prompt_id))
+        batchPrompt <- tbl(localConn, "prompt") |>
+          filter(id %in% local(batchPromptIds)) |>
+          collect() |>
+          dbRowsMissing(targetConn, "prompt")
+        if (nrow(batchPrompt) > 0) {
+          tbl_insert(batchPrompt, targetConn, "prompt", commit = F)
+          inserted["prompt"] <- inserted["prompt"] + nrow(batchPrompt)
+        }
+
+        tbl_insert(batch, targetConn, "batch", commit = F)
+        inserted["batch"] <- nrow(batch)
+      }
+
+      tbl_insert(br, targetConn, "batch_review", commit = F)
+      inserted["batch_review"] <- nrow(br)
+    }
+  }
+
+  result <- list(
+    inserted = inserted[inserted > 0],
+    skipped = skipped,
+    excluded = list(not_found = not_found, not_completed = not_completed)
+  )
+
+  dbFinish(targetConn, commit = TRUE)
+  dbFinish(localConn, commit = FALSE)
+
+  result
 }
 
 #' Add core faculty start dates and update core faculty status in evaluations

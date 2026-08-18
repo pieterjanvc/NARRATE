@@ -350,34 +350,37 @@ pinDB <- function(
     return(list(success = F, msg = "Action must be: import, export or both"))
   }
 
-  tryCatch(
+  result <- tryCatch(
     {
-      if ("export" %in% action) {
-        backup <- pin_dev_set(exportPin, dbPath)
+      # Always back up the current DB before it can be overwritten by an import
+      if ("export" %in% action || "import" %in% action) {
+        pin_dev_set(exportPin, dbPath, nBackups = nBackups)
       }
 
       if ("import" %in% action) {
         # Import the latest upload and replace it locally
-        result <- pin_dev_get(importPin, dbPath, tempBackup = F)
+        imported <- pin_dev_get(importPin, dbPath, tempBackup = F)
 
         if (!dbIsSQLite(dbPath)) {
           file.remove(dbPath)
-          file.copy(result$tempBackup, dbPath)
-          file.remove(result$tempBackup)
+          file.copy(imported$tempBackup, dbPath)
+          file.remove(imported$tempBackup)
           stop("Import file not a valid database")
         }
 
-        file.remove(result$tempBackup)
+        file.remove(imported$tempBackup)
       }
+
+      list(
+        success = T,
+        msg = sprintf("Database %s completed", paste(action, collapse = " and "))
+      )
     },
     error = function(e) {
-      return(list(success = F, msg = e))
+      list(success = F, msg = conditionMessage(e))
     }
   )
-  return(list(
-    success = T,
-    msg = sprintf("Database %s completed", paste(action, collapse = " and "))
-  ))
+  return(result)
 }
 
 #' Get a pin
