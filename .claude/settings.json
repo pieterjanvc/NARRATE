@@ -13,7 +13,8 @@
       "Bash(Rscript -e 'parse\\(\"R/helperFunctions.R\"\\); cat\\(\"OK\\\\n\"\\)')",
       "Bash(Rscript -e 'parse\\(\"inst/review_app.R\"\\); cat\\(\"OK\\\\n\"\\)')",
       "Bash(Rscript -e 'devtools::document\\(\".\"\\)')",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "Bash(Rscript -e \"tryCatch\\({parse\\('inst/review_app.R'\\); cat\\('OK\\\\n'\\)}, error=function\\(e\\) {cat\\('PARSE ERROR:', conditionMessage\\(e\\), '\\\\n'\\)}\\)\")"
     ]
   }
 }

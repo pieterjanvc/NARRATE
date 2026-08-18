@@ -332,6 +332,17 @@ server <- function(input, output, session) {
     mutate(username = ifelse(is.na(username), "AI Model", username)) |>
     (\(x) setNames(x$username, as.character(x$id)))()
 
+  # mod_overlap's user_names is captured once, non-reactively - so an
+  # incomplete reviewer (varies per review round) is flagged via a distinct
+  # "<id>|incomplete" user_id in overlapHighlights instead, resolved here
+  all_reviewer_names_overlap <- c(
+    all_reviewer_names,
+    setNames(
+      paste0(all_reviewer_names, " (incomplete)"),
+      paste0(names(all_reviewer_names), "|incomplete")
+    )
+  )
+
   specificity_opts <- tbl(conn, "specificity") |>
     collect() |>
     arrange(value)
@@ -1263,6 +1274,8 @@ server <- function(input, output, session) {
 
   overlapHighlights <- reactive({
     info <- analysisInfo()
+    incompleteReviewers <- info$overall$reviewer_id[!info$overall$statusCode %in% ra_done_codes]
+
     info$compText |>
       left_join(
         info$compInfo |>
@@ -1271,7 +1284,11 @@ server <- function(input, output, session) {
       ) |>
       transmute(
         id = id,
-        user_id = as.character(reviewer_id),
+        user_id = ifelse(
+          reviewer_id %in% incompleteReviewers,
+          paste0(reviewer_id, "|incomplete"),
+          as.character(reviewer_id)
+        ),
         group_id = as.character(competency_id),
         start = start,
         end = end,
@@ -1284,7 +1301,7 @@ server <- function(input, output, session) {
     "analysis_overlap",
     highlights = overlapHighlights,
     group_names = all_competency_names,
-    user_names = all_reviewer_names,
+    user_names = all_reviewer_names_overlap,
     text = reactive({
       dbGetEvals(
         ids = selected_analysis_review()$eval_id,
