@@ -924,13 +924,20 @@ server <- function(input, output, session) {
         shinyjs::enable("cID")
       }
 
+      resetNeeded <- hasStaged || hasDeleted || nrow(compScores) == 0
+      oldVal <- if (nrow(compScores) == 1) compScores$specificity else NULL
+
       updateRadioButtons(
         inputId = "specificity",
-        selected = if (hasStaged || hasDeleted || nrow(compScores) == 0) {
-          character(0)
-        } else {
-          compScores$specificity
-        }
+        label = examples_label(
+          if (resetNeeded && !is.null(oldVal)) {
+            sprintf("Specificity score (old = %s)", oldVal)
+          } else {
+            "Specificity score"
+          },
+          review_rubric_opts()$specificity
+        ),
+        selected = if (resetNeeded) character(0) else compScores$specificity
       )
     },
     ignoreInit = TRUE
