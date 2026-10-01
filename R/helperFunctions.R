@@ -350,34 +350,37 @@ pinDB <- function(
     return(list(success = F, msg = "Action must be: import, export or both"))
   }
 
-  tryCatch(
+  result <- tryCatch(
     {
-      if ("export" %in% action) {
-        backup <- pin_dev_set(exportPin, dbPath)
+      # Always back up the current DB before it can be overwritten by an import
+      if ("export" %in% action || "import" %in% action) {
+        pin_dev_set(exportPin, dbPath, nBackups = nBackups)
       }
 
       if ("import" %in% action) {
         # Import the latest upload and replace it locally
-        result <- pin_dev_get(importPin, dbPath, tempBackup = F)
+        imported <- pin_dev_get(importPin, dbPath, tempBackup = F)
 
         if (!dbIsSQLite(dbPath)) {
           file.remove(dbPath)
-          file.copy(result$tempBackup, dbPath)
-          file.remove(result$tempBackup)
+          file.copy(imported$tempBackup, dbPath)
+          file.remove(imported$tempBackup)
           stop("Import file not a valid database")
         }
 
-        file.remove(result$tempBackup)
+        file.remove(imported$tempBackup)
       }
+
+      list(
+        success = T,
+        msg = sprintf("Database %s completed", paste(action, collapse = " and "))
+      )
     },
     error = function(e) {
-      return(list(success = F, msg = e))
+      list(success = F, msg = conditionMessage(e))
     }
   )
-  return(list(
-    success = T,
-    msg = sprintf("Database %s completed", paste(action, collapse = " and "))
-  ))
+  return(result)
 }
 
 #' Get a pin
@@ -449,100 +452,203 @@ pin_dev_set <- function(
   return(newPin)
 }
 
-#' Monitor a batch job and send a PushOver notification when complete
+#' Backup the local DB and replace it with the latest online export
+#'
+#' Copies the current local database to
+#' \code{<backupDir>/narrate-<today>.db} (e.g. \code{local/backup/narrate-2026-09-07.db}),
+#' then downloads the latest exported database from the pin and writes it to
+#' \code{dbPath}.
+#'
+#' @param dbPath (Default = "local/narrate.db") Path to the local database
+#' @param exportPin (Default = "narrate_db_export") Pin holding the exported DB
+#' @param backupDir (Default = "local/backup") Directory for the dated backup
+#'
+#' @import pins
+#'
+#' @returns (invisibly) list with the backup path and the refreshed db path
+#' @export
+#'
+fetch_online_db <- function(
+  dbPath = "local/narrate.db",
+  exportPin = "narrate_db_export",
+  backupDir = "local/backup"
+) {
+  if (!file.exists(dbPath)) {
+    stop("Local database not found at ", dbPath)
+  }
+
+  # Back up the current local DB before it gets overwritten
+  dir.create(backupDir, showWarnings = F, recursive = T)
+  backupPath <- file.path(
+    backupDir,
+    sprintf("narrate-%s.db", format(Sys.Date(), "%Y-%m-%d"))
+  )
+  file.copy(dbPath, backupPath, overwrite = T)
+  print(paste("Local database backed up to", backupPath))
+
+  # Pull the latest export down and set it as the new local DB
+  pin_dev_get(exportPin, dbPath, tempBackup = F)
+  print(paste("Latest online export written to", dbPath))
+
+  invisible(list(backup = backupPath, db = dbPath))
+}
+
+#' Poll a batch to a terminal state and send one PushOver notification
+#'
+#' The monitoring loop behind batch_status_notify(). Kept as its own function
+#' so the detached process launched by batch_status_notify() can reach it with
+#' a one-line generated script (pkgload::load_all() + this call) instead of
+#' carrying the whole loop inline.
+#'
+#' @param batch_id ID of the batch to monitor
+#' @param db_path Path to the SQLite database
+#' @param auth Named list with url/key/user for the PushOver API. Defaults to
+#'   reading the `PUSHOVER_URL` / `PUSHOVER_KEY` / `PUSHOVER_USER` env vars,
+#'   which is how batch_status_notify() hands the credentials to its detached
+#'   monitor (keeps them out of the on-disk script)
+#' @param feq_sec Polling interval in seconds
+#' @param max_wait Maximum time in seconds before giving up and notifying
+#'
+#' @returns Invisibly, the message that was sent
+#' @keywords internal
+batch_notify_poll <- function(
+  batch_id,
+  db_path,
+  auth = list(
+    url = Sys.getenv("PUSHOVER_URL"),
+    key = Sys.getenv("PUSHOVER_KEY"),
+    user = Sys.getenv("PUSHOVER_USER")
+  ),
+  feq_sec = 60,
+  max_wait = 2 * 3600
+) {
+  push <- function(message) {
+    httr2::request(auth$url) |>
+      httr2::req_body_form(token = auth$key, user = auth$user, message = message) |>
+      httr2::req_perform()
+    message
+  }
+
+  conn <- sqlife::dbGetConn(db_path)
+  start_time <- Sys.time()
+
+  # sqlife::dbGetConn() registers a deferred check that errors if the
+  # connection isn't closed with dbFinish() before its frame exits, so every
+  # exit path has to close it before notifying / returning.
+  settle <- function(message) {
+    try(dbFinish(conn), silent = TRUE)
+    invisible(push(message))
+  }
+
+  tryCatch(
+    repeat {
+      elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+      if (elapsed >= max_wait) {
+        return(settle(paste("LLM batch", batch_id, "timed out")))
+      }
+
+      batch_info <- llm_batch_status(batch_id, conn)
+
+      if (batch_info$statusCode == 3) {
+        return(settle(paste("LLM batch", batch_id, "finished")))
+      }
+
+      # Failed / expired / cancelled - notify now rather than waiting out max_wait
+      if (batch_info$statusCode < 0) {
+        return(settle(paste(
+          "LLM batch", batch_id,
+          "did not complete (statusCode", batch_info$statusCode, ")"
+        )))
+      }
+
+      Sys.sleep(feq_sec)
+    },
+    error = function(e) {
+      settle(paste("LLM batch", batch_id, "error:", conditionMessage(e)))
+    }
+  )
+}
+
+#' Monitor a batch job and send a PushOver notification when it settles
+#'
+#' Polls llm_batch_status() in a detached R process and notifies once the
+#' batch completes (statusCode 3), fails/expires/cancels (statusCode < 0), or
+#' the max_wait is reached. Content-agnostic - works for any batch step
+#' (extract, resolve, score).
 #'
 #' @param batch_id ID of the batch to monitor
 #' @param db_path Path to the SQLite database
 #' @param feq_sec (Default = 60) Polling interval in seconds
-#' @param max_wait (Default = 2 hours) Maximum time in seconds before killing the process
+#' @param max_wait (Default = 2 hours) Maximum time in seconds before giving up
 #' @param pkg_path (Default = here::here()) Path to the package source, loaded
-#'   with pkgload::load_all() in the background process so that dev-only
-#'   functions (e.g. llm_batch_status) are available there too
+#'   with pkgload::load_all() in the monitor process so that dev-only functions
+#'   (e.g. llm_batch_status) are available there too
+#' @param work_dir (Default = a "batch_notify" folder next to db_path) Where the
+#'   generated monitor script and its log are written
 #'
-#' @import callr keyring
+#' @details The monitor is launched as a fully detached `Rscript` process
+#'   (`cleanup = FALSE`, `supervise = FALSE`) running a small script written to
+#'   `work_dir` - not a `callr::r_bg()` closure. `callr::r_bg()` keeps its
+#'   bootstrap script in the *caller's* session tempdir, which R deletes on
+#'   exit, so an r_bg monitor dies the moment a submit-and-return script
+#'   finishes. Writing a standalone script to a persistent folder and inheriting
+#'   the caller's library paths via `R_LIBS` lets the monitor outlive the
+#'   calling session. The PushOver credentials are read from the keyring once
+#'   here and passed to the detached process as environment variables (not
+#'   written into the on-disk script), so it never touches the keyring itself.
+#'   The generated script deletes itself on start.
 #'
-#' @returns Invisibly returns the background process handle (callr r_bg object)
+#' @import keyring
+#'
+#' @returns Invisibly, a list with the monitor's `process` (processx handle),
+#'   `script` path, and `log` path
 #'
 batch_status_notify <- function(
   batch_id,
   db_path,
   feq_sec = 60,
   max_wait = 2 * 3600,
-  pkg_path = here::here()
+  pkg_path = here::here(),
+  work_dir = file.path(dirname(normalizePath(db_path, mustWork = FALSE)), "batch_notify")
 ) {
   auth <- keyring::key_get("PUSHOVER_API", "default") |> jsonlite::fromJSON()
 
-  bg <- callr::r_bg(
-    func = function(batch_id, db_path, feq_sec, max_wait, auth, pkg_path) {
-      pkgload::load_all(pkg_path, quiet = TRUE)
-      conn <- sqlife::dbGetConn(db_path)
+  dir.create(work_dir, showWarnings = FALSE, recursive = TRUE)
+  stamp <- format(Sys.time(), "%Y%m%d-%H%M%S")
+  script_path <- file.path(work_dir, sprintf("notify_%s_%s.R", batch_id, stamp))
+  log_path <- file.path(work_dir, sprintf("notify_%s_%s.log", batch_id, stamp))
 
-      start_time <- Sys.time()
-
-      tryCatch(
-        {
-          repeat {
-            elapsed <- as.numeric(difftime(
-              Sys.time(),
-              start_time,
-              units = "secs"
-            ))
-            if (elapsed >= max_wait) {
-              dbFinish(conn)
-              httr2::request(auth$url) |>
-                httr2::req_body_form(
-                  token = auth$key,
-                  user = auth$user,
-                  message = paste("LLM batch", batch_id, "timed out")
-                ) |>
-                httr2::req_perform()
-              break
-            }
-
-            batch_info <- llm_batch_status(batch_id, conn)
-
-            if (batch_info$statusCode == 3) {
-              httr2::request(auth$url) |>
-                httr2::req_body_form(
-                  token = auth$key,
-                  user = auth$user,
-                  message = paste("LLM batch", batch_id, "finished")
-                ) |>
-                httr2::req_perform()
-
-              break
-            }
-
-            Sys.sleep(feq_sec)
-          }
-        },
-        error = function(e) {
-          httr2::request(auth$url) |>
-            httr2::req_body_form(
-              token = auth$key,
-              user = auth$user,
-              message = paste(
-                "LLM batch",
-                batch_id,
-                "error:",
-                conditionMessage(e)
-              )
-            ) |>
-            httr2::req_perform()
-        }
-      )
-    },
-    args = list(
-      batch_id = batch_id,
-      db_path = db_path,
-      feq_sec = feq_sec,
-      max_wait = max_wait,
-      auth = auth,
-      pkg_path = pkg_path
-    )
+  writeLines(
+    c(
+      sprintf("invisible(file.remove(%s))", encodeString(script_path, quote = '"')),
+      sprintf("pkgload::load_all(%s, quiet = TRUE)", encodeString(normalizePath(pkg_path), quote = '"')),
+      "NARRATE:::batch_notify_poll(",
+      sprintf("  batch_id = %s,", batch_id),
+      sprintf("  db_path = %s,", encodeString(normalizePath(db_path, mustWork = FALSE), quote = '"')),
+      sprintf("  feq_sec = %s,", feq_sec),
+      sprintf("  max_wait = %s", max_wait),
+      ")"
+    ),
+    script_path
   )
 
-  invisible(bg)
+  libs <- paste(.libPaths(), collapse = .Platform$path.sep)
+  px <- processx::process$new(
+    file.path(R.home("bin"), "Rscript"),
+    c("--no-save", "--no-restore", script_path),
+    env = c(
+      "current",
+      R_LIBS = libs, R_LIBS_USER = libs, R_LIBS_SITE = libs,
+      HMS_AZURE_API = Sys.getenv("HMS_AZURE_API"),
+      PUSHOVER_URL = auth$url, PUSHOVER_KEY = auth$key, PUSHOVER_USER = auth$user
+    ),
+    stdout = log_path,
+    stderr = "2>&1",
+    cleanup = FALSE,
+    supervise = FALSE
+  )
+
+  invisible(list(process = px, script = script_path, log = log_path))
 }
 
 #' Look up status codes for a database table or function

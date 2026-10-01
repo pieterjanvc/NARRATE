@@ -2,7 +2,7 @@
 % Please edit documentation in R/helperFunctions.R
 \name{batch_status_notify}
 \alias{batch_status_notify}
-\title{Monitor a batch job and send a PushOver notification when complete}
+\title{Monitor a batch job and send a PushOver notification when it settles}
 \usage{
 batch_status_notify(
   batch_id,
@@ -29,5 +29,8 @@ functions (e.g. llm_batch_status) are available there too}
 Invisibly returns the background process handle (callr r_bg object)
 }
 \description{
-Monitor a batch job and send a PushOver notification when complete
+Polls llm_batch_status() in a background process and notifies once the
+batch completes (statusCode 3), fails/expires/cancels (statusCode < 0), or
+the max_wait is reached. Content-agnostic - works for any batch step
+(extract, resolve, score).
 }

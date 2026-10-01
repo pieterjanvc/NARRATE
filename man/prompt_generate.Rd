@@ -15,10 +15,12 @@ prompt_generate(conn, rubric_id = NULL)
 Named list with elements \code{extract} and \code{score}
 }
 \description{
-Replaces \code{\{competencies\}}, \code{\{disambiguation\}}, \code{\{rules\}},
-and per-category score placeholders (\code{\{specificity\}}, \code{\{utility\}},
-\code{\{sentiment\}}) with content queried from the database for the
-specified rubric.
+Replaces \code{\{competencies\}}, \code{\{disambiguation_section\}},
+\code{\{rules\}}, and per-category score placeholders (\code{\{specificity\}},
+\code{\{utility\}}, \code{\{sentiment\}}) with content queried from the
+database for the specified rubric. disambiguation_section is dropped
+entirely (not left as an empty section) when the rubric has no
+competency_diff rows - see prompt_build_competencies().
 }
 \details{
 Competencies, rules, and score options are ordered by the \code{order}

@@ -28,7 +28,9 @@ llm_comp_extract_run(
 }
 \value{
 Data frame summarising results per review_id
-(review_id, statusCode, tokens_in, tokens_out)
+(review_id, statusCode, tokens_in, tokens_out). statusCode 6 means
+extraction succeeded but dbCompExtractionCheckConflicts() found a rule-2
+violation (see status_codes table).
 }
 \description{
 Fetches evaluation text and prompts from the database, calls llm_comp_extract()

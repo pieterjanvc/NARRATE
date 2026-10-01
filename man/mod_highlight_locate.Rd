@@ -23,3 +23,14 @@ each match's first occurrence that doesn't overlap a previously claimed
 range. Matches are resolved in the order given, so earlier entries in
 \code{matches} get first pick of ambiguous (repeated) occurrences.
 }
+\details{
+An exact (\code{fixed = TRUE}) search is tried first; if that fails the match
+is retried with a whitespace-tolerant pattern (every run of whitespace in
+the needle allowed to match zero or more whitespace characters in
+\code{plainText}). This recovers quotes that were copied from a differently
+whitespaced rendering of the same text - e.g. the AI extraction prompt
+shows the evaluation with question headers and blank lines, while offsets
+are measured against the tag-stripped copy where a \verb{<br>} between two
+words collapses to nothing. A genuinely paraphrased quote still matches
+nothing and stays \code{NA}.
+}

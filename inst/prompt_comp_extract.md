@@ -8,12 +8,7 @@ the evaluator and how how good the quality of each description is.
 
 {rules}
 
-# DISAMBIGUATION
-
-When text could fit more than one competency, apply these rules to assign it to
-a single one:
-
-{disambiguation}
+{disambiguation_section}
 
 # COMPETENCIES
 

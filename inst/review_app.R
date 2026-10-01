@@ -9,8 +9,8 @@ library(DT)
 library(sqlife)
 
 
-# dbInfo <- "../local/narrate.db"
-dbInfo <- "../local/test.db"
+dbInfo <- "../local/narrate.db"
+# dbInfo <- "../local/test.db"
 # dbInfo <- "~/Downloads/narrate.db"
 
 # This is the db used during deployment, see deployShinyApp()
@@ -53,6 +53,12 @@ ui <- page_fluid(
     /* DT selected row colour */
     :root {
     --dt-row-selected: 224, 168, 78;
+    }
+    /* mod_overlap_ui_filters() has no width= param, so its selects fall
+       back to Shiny's default 300px .shiny-input-container width */
+    .analysis-overlap-filters .shiny-input-container {
+      width: 100%;
+      max-width: 100%;
     }
     .tooltip .tooltip-inner {
       max-width: 300px;
@@ -173,13 +179,20 @@ ui <- page_fluid(
       layout_columns(
         card(
           card_header("Evaluation"),
-          selectInput(
-            "analysis_evalID",
-            "Select a review to compare",
-            choices = c(),
-            width = "100%"
+          div(DTOutput("analysis_review_table")),
+          div(uiOutput("analysis_score_summary"), class = "mt-2"),
+          div(
+            class = "analysis-overlap-filters",
+            mod_overlap_ui_filters(
+              "analysis_overlap",
+              group_label = "Competency",
+              user_label = "Reviewer"
+            )
           ),
-          uiOutput("analysis_evaluation")
+          div(
+            mod_overlap_ui_text("analysis_overlap"),
+            style = "max-height: 40vh; overflow-y: auto;"
+          )
         )
       ),
       uiOutput("textMatches"),
@@ -231,10 +244,14 @@ ui <- page_fluid(
       card(
         card_header("Select Evaluation"),
         div(DTOutput("assignment_eval_table")),
-        checkboxInput(
-          "includeOtherRubric",
-          "Include previously reviewed with different rubric",
-          value = FALSE,
+        selectInput(
+          "hideHumanRubrics",
+          paste(
+            "Hide evals already assigned to a human reviewer under",
+            "rubric version(s):"
+          ),
+          choices = c(),
+          multiple = TRUE,
           width = "auto"
         ),
         actionButton("assignToAll", "Assign to all")
@@ -303,6 +320,32 @@ server <- function(input, output, session) {
     arrange(order) |>
     select(competency_id, comp_order = order, name, description, note) |>
     collect()
+
+  # Global id -> name lookups for mod_overlap on the ANALYSIS tab. Built from
+  # the full tables (not scoped to the latest rubric) since an evaluation may
+  # have been reviewed under an older rubric version, and mod_overlap's
+  # group_names/user_names are captured once, non-reactively.
+  all_competency_names <- tbl(conn, "competency") |>
+    select(id, name) |>
+    collect() |>
+    (\(x) setNames(x$name, as.character(x$id)))()
+
+  all_reviewer_names <- tbl(conn, "reviewer") |>
+    select(id, username) |>
+    collect() |>
+    mutate(username = ifelse(is.na(username), "AI Model", username)) |>
+    (\(x) setNames(x$username, as.character(x$id)))()
+
+  # mod_overlap's user_names is captured once, non-reactively - so an
+  # incomplete reviewer (varies per review round) is flagged via a distinct
+  # "<id>|incomplete" user_id in overlapHighlights instead, resolved here
+  all_reviewer_names_overlap <- c(
+    all_reviewer_names,
+    setNames(
+      paste0(all_reviewer_names, " (incomplete)"),
+      paste0(names(all_reviewer_names), "|incomplete")
+    )
+  )
 
   specificity_opts <- tbl(conn, "specificity") |>
     collect() |>
@@ -657,11 +700,17 @@ server <- function(input, output, session) {
 
       # Specificity score options — loaded from the rubric attached to this review
       rr_opts <- review_rubric_opts()
+      curCompScore <- compScores |>
+        filter(competency_id == as.integer(input$cID))
       updateRadioButtons(
         inputId = "specificity",
         label = examples_label("Specificity score", rr_opts$specificity),
         choices = score_choices(rr_opts$specificity),
-        selected = NULL
+        selected = if (nrow(curCompScore) == 1) {
+          curCompScore$specificity
+        } else {
+          character(0)
+        }
       )
 
       # Overall scores
@@ -885,13 +934,20 @@ server <- function(input, output, session) {
         shinyjs::enable("cID")
       }
 
+      resetNeeded <- hasStaged || hasDeleted || nrow(compScores) == 0
+      oldVal <- if (nrow(compScores) == 1) compScores$specificity else NULL
+
       updateRadioButtons(
         inputId = "specificity",
-        selected = if (hasStaged || hasDeleted || nrow(compScores) == 0) {
-          character(0)
-        } else {
-          compScores$specificity
-        }
+        label = examples_label(
+          if (resetNeeded && !is.null(oldVal)) {
+            sprintf("Specificity score (old = %s)", oldVal)
+          } else {
+            "Specificity score"
+          },
+          review_rubric_opts()$specificity
+        ),
+        selected = if (resetNeeded) character(0) else compScores$specificity
       )
     },
     ignoreInit = TRUE
@@ -1019,59 +1075,189 @@ server <- function(input, output, session) {
 
   #### ANALYSIS TAB ####
 
-  # Populate the review dropdown
-  reviewInfo <- tbl(conn, "review_assignment") |>
-    left_join(
-      tbl(conn, "reviewer") |> select(reviewer_id = id, human),
-      by = "reviewer_id"
-    ) |>
-    group_by(evaluation_id, reviewer_id) |>
-    filter(modified == max(modified)) |>
-    group_by(evaluation_id) |>
-    # filter(any(statusCode > 0)) |> # Add once out of dev
-    summarise(
-      nAI = n() - sum(human),
-      nHuman = sum(human),
-      nComplete = sum(statusCode %in% local(ra_done_codes))
-    ) |>
-    ungroup() |>
-    collect()
+  # One row per (evaluation, rubric) review round — an evaluation reviewed
+  # under two rubric versions shows up as two separate rows, so analysis
+  # never mixes completion stats or reviewer scores across rubric versions.
+  analysisReviewData <- {
+    ra <- tbl(conn, "review_assignment") |>
+      left_join(
+        tbl(conn, "reviewer") |> select(reviewer_id = id, human, username),
+        by = "reviewer_id"
+      ) |>
+      collect() |>
+      group_by(evaluation_id, reviewer_id, rubric_id) |>
+      filter(modified == max(modified)) |>
+      ungroup() |>
+      mutate(username = ifelse(is.na(username), "AI Model", username))
 
-  updateSelectInput(
-    session,
-    "analysis_evalID",
-    choices = setNames(
-      reviewInfo$evaluation_id,
-      sprintf(
-        "%i - %i/%i completed",
-        reviewInfo$evaluation_id,
-        reviewInfo$nComplete,
-        reviewInfo$nAI + reviewInfo$nHuman
+    # Per-review scores, computed once per session. Incomplete reviews are
+    # expected here (this tab shows in-progress review groups), so
+    # error_on_incomplete = FALSE.
+    analysisScores <- review_scores(conn, ra$id, error_on_incomplete = FALSE) |>
+      mutate(total_frac = coverage + avg_specificity + utility) |>
+      left_join(
+        ra |> select(review_id = id, evaluation_id, rubric_id),
+        by = "review_id"
+      )
+
+    scoreSummary <- analysisScores |>
+      group_by(evaluation_id, rubric_id) |>
+      summarise(
+        avg_score = mean(total_frac, na.rm = TRUE) * 100,
+        sd_score = sd(total_frac, na.rm = TRUE) * 100,
+        .groups = "drop"
+      )
+
+    reviewGroups <- ra |>
+      group_by(evaluation_id, rubric_id) |>
+      summarise(
+        assign_date = format(as.Date(min(created)), "%Y-%m-%d"),
+        n = sum(statusCode %in% ra_done_codes),
+        total = n(),
+        completed_reviewers = {
+          done <- sort(unique(username[statusCode %in% ra_done_codes]))
+          if (length(done) == 0) "None" else paste(done, collapse = ", ")
+        },
+        .groups = "drop"
+      ) |>
+      mutate(perc = round(100 * n / total, 1)) |>
+      left_join(scoreSummary, by = c("evaluation_id", "rubric_id"))
+
+    evalInfo <- tbl(conn, "evaluation") |>
+      left_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
+      left_join(tbl(conn, "clerkship"), by = c("clerkship_id" = "id")) |>
+      select(id, summary_flg, clerkship, core_faculty) |>
+      collect()
+
+    reviewGroups |>
+      left_join(evalInfo, by = c("evaluation_id" = "id")) |>
+      mutate(
+        type = ifelse(summary_flg == 1, "summative", "formative"),
+        core_faculty = !is.na(core_faculty) & core_faculty == 1
+      ) |>
+      select(
+        evaluation_id,
+        assign_date,
+        rubric_id,
+        type,
+        clerkship,
+        core_faculty,
+        n,
+        total,
+        perc,
+        avg_score,
+        sd_score,
+        completed_reviewers
+      ) |>
+      arrange(desc(evaluation_id))
+  }
+
+  # Columns whose visible cell is a formatted string (for a plain text filter
+  # box instead of DT's default range-slider on numeric columns) each carry a
+  # hidden twin holding the raw numeric value, linked via columnDefs orderData
+  # so sorting/ordering still works correctly.
+  output$analysis_review_table <- renderDT({
+    df <- analysisReviewData
+    display <- data.frame(
+      `Eval ID` = as.character(df$evaluation_id),
+      `Assign Date` = df$assign_date,
+      `Rubric ID` = as.character(df$rubric_id),
+      Type = df$type,
+      Clerkship = df$clerkship,
+      `Core Faculty` = df$core_faculty,
+      N = sprintf(
+        '<span title="%s">%d</span>',
+        htmltools::htmlEscape(df$completed_reviewers),
+        df$n
+      ),
+      `%` = sprintf("%.1f", df$perc),
+      `Avg Score` = ifelse(
+        is.na(df$avg_score),
+        "—",
+        ifelse(
+          is.na(df$sd_score),
+          sprintf("%.1f", df$avg_score),
+          sprintf("%.1f ± %.1f", df$avg_score, df$sd_score)
+        )
+      ),
+      eval_id_sort = df$evaluation_id,
+      rubric_id_sort = df$rubric_id,
+      n_sort = df$n,
+      perc_sort = df$perc,
+      avg_score_sort = ifelse(is.na(df$avg_score), -1, df$avg_score),
+      check.names = FALSE
+    )
+    datatable(
+      display,
+      selection = "single",
+      rownames = FALSE,
+      escape = -match("N", names(display)),
+      filter = list(position = 'top', clear = FALSE, plain = FALSE),
+      options = list(
+        pageLength = 15,
+        dom = "tip",
+        scrollX = TRUE,
+        order = list(list(1, "desc"), list(2, "desc"), list(0, "asc")),
+        columnDefs = list(
+          list(targets = 0, orderData = 9),
+          list(targets = 2, orderData = 10),
+          list(targets = 6, orderData = 11),
+          list(targets = 7, orderData = 12),
+          list(targets = 8, orderData = 13),
+          list(targets = c(9, 10, 11, 12, 13), visible = FALSE)
+        )
       )
     )
-  )
+  })
 
-  output$analysis_evaluation <- renderUI({
-    req(input$analysis_evalID)
-    div(
-      HTML(
-        dbGetEvals(
-          ids = as.integer(input$analysis_evalID),
-          conn = conn,
-          redacted = T,
-          includeQuestions = T,
-          html = T,
-          subtitleTag = "b"
-        ) |>
-          pull(evaluation)
-      ),
-      style = "max-height: 40vh; overflow-y: auto;"
+  selected_analysis_review <- reactive({
+    row <- input$analysis_review_table_rows_selected
+    req(row)
+    list(
+      eval_id = analysisReviewData$evaluation_id[row],
+      rubric_id = analysisReviewData$rubric_id[row]
+    )
+  })
+
+  output$analysis_score_summary <- renderUI({
+    sel <- selected_analysis_review()
+    scores <- analysisScores |>
+      filter(evaluation_id == sel$eval_id, rubric_id == sel$rubric_id)
+
+    if (nrow(scores) == 0) {
+      return(tags$p(
+        "No completed reviews yet for this evaluation.",
+        class = "text-muted"
+      ))
+    }
+
+    stat_pair <- function(x) {
+      c(mean = mean(x, na.rm = TRUE) * 100, sd = sd(x, na.rm = TRUE) * 100)
+    }
+    row <- function(label, s, header = FALSE) {
+      td_fn <- if (header) tags$th else tags$td
+      tags$tr(
+        td_fn(label),
+        td_fn(sprintf("%.1f", s["mean"])),
+        td_fn(if (is.na(s["sd"])) "" else sprintf("%.1f", s["sd"]))
+      )
+    }
+
+    tags$table(
+      class = "table table-sm mt-1",
+      tags$tbody(
+        row("Coverage", stat_pair(scores$coverage)),
+        row("Avg Specificity", stat_pair(scores$avg_specificity)),
+        row("Utility", stat_pair(scores$utility)),
+        row("Total", stat_pair(scores$total_frac), header = TRUE)
+      )
     )
   })
 
   analysisInfo <- reactive({
+    sel <- selected_analysis_review()
     overall <- tbl(conn, "review_assignment") |>
-      filter(evaluation_id == as.integer(input$analysis_evalID)) |>
+      filter(evaluation_id == sel$eval_id, rubric_id == sel$rubric_id) |>
       left_join(
         tbl(conn, "reviewer") |>
           select(reviewer_id = id, reviewer = username),
@@ -1102,6 +1288,49 @@ server <- function(input, output, session) {
       compText = compText
     )
   })
+
+  overlapHighlights <- reactive({
+    info <- analysisInfo()
+    incompleteReviewers <- info$overall$reviewer_id[!info$overall$statusCode %in% ra_done_codes]
+
+    info$compText |>
+      left_join(
+        info$compInfo |>
+          select(competency_score_id = id, competency_id, score = specificity, note),
+        by = "competency_score_id"
+      ) |>
+      transmute(
+        id = id,
+        user_id = ifelse(
+          reviewer_id %in% incompleteReviewers,
+          paste0(reviewer_id, "|incomplete"),
+          as.character(reviewer_id)
+        ),
+        group_id = as.character(competency_id),
+        start = start,
+        end = end,
+        score = score,
+        note = note
+      )
+  })
+
+  mod_overlap_server(
+    "analysis_overlap",
+    highlights = overlapHighlights,
+    group_names = all_competency_names,
+    user_names = all_reviewer_names_overlap,
+    text = reactive({
+      dbGetEvals(
+        ids = selected_analysis_review()$eval_id,
+        conn = conn,
+        redacted = T,
+        includeQuestions = T,
+        html = T,
+        subtitleTag = "b"
+      ) |>
+        pull(evaluation)
+    })
+  )
 
   comparisonTable <- reactive({
     info <- analysisInfo()
@@ -1269,6 +1498,14 @@ server <- function(input, output, session) {
         showNotification(check$msg, type = "message")
       } else {
         showNotification(check$msg, type = "error")
+      }
+
+      if ("import" %in% pinAction && check$success) {
+        # The connection opened at app start still points at the replaced
+        # file, so reload the session to pick up the freshly imported DB
+        removeModal()
+        session$reload()
+        return()
       }
     }
 
@@ -1972,6 +2209,11 @@ server <- function(input, output, session) {
       )
     }
 
+    # Competency/rule/score edits change what the extraction/scoring prompts
+    # should say, so regenerate and relink them to keep the stored prompt
+    # text in sync with the rubric's current content.
+    rubric_link_prompts(conn, selected_rid)
+
     rubric_refresh_trigger(rubric_refresh_trigger() + 1)
     showNotification(
       if (nrow(to_delete) > 0) {
@@ -1989,10 +2231,21 @@ server <- function(input, output, session) {
   })
   #### ASSIGNMENT TAB ####
 
-  # Reactive: evaluations eligible to assign, respecting the checkbox filter.
-  # Always excluded: any eval already assigned with the latest rubric.
-  # Unchecked: also exclude evals that have any assignment (any rubric).
-  # Checked:   include evals assigned only under a different rubric.
+  # Populate the rubric-version multi-select used to hide already-assigned evals.
+  local({
+    rubrics_df <- loadRubrics()
+    updateSelectInput(
+      session,
+      "hideHumanRubrics",
+      choices = setNames(rubrics_df$id, rubrics_df$label)
+    )
+  })
+
+  # Reactive: evaluations eligible to assign. By default every evaluation is
+  # listed, regardless of who (human or AI) has already reviewed it. Selecting
+  # one or more rubric versions in `hideHumanRubrics` hides evals that already
+  # have a *human* review assignment under any of those rubric versions; AI
+  # assignments never hide an eval.
   assignment_eval_choices <- reactive({
     all_evals <- tbl(conn, "evaluation") |>
       left_join(tbl(conn, "rotation"), by = c("rotation_id" = "id")) |>
@@ -2015,19 +2268,23 @@ server <- function(input, output, session) {
       mutate(original_evaluator_id = as.character(original_evaluator_id)) |>
       arrange(id)
 
-    latest_assigned <- tbl(conn, "review_assignment") |>
-      filter(rubric_id == local(latest_rubric_id)) |>
+    hide_rubrics <- as.integer(input$hideHumanRubrics)
+    if (length(hide_rubrics) == 0) {
+      return(all_evals)
+    }
+
+    human_assigned <- tbl(conn, "review_assignment") |>
+      filter(rubric_id %in% local(hide_rubrics)) |>
+      inner_join(
+        tbl(conn, "reviewer") |>
+          filter(human == 1) |>
+          select(reviewer_id = id),
+        by = "reviewer_id"
+      ) |>
       pull(evaluation_id) |>
       unique()
 
-    if (isTRUE(input$includeOtherRubric)) {
-      all_evals |> filter(!id %in% latest_assigned)
-    } else {
-      any_assigned <- tbl(conn, "review_assignment") |>
-        pull(evaluation_id) |>
-        unique()
-      all_evals |> filter(!id %in% any_assigned)
-    }
+    all_evals |> filter(!id %in% human_assigned)
   })
 
   output$assignment_eval_table <- renderDT({

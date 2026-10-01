@@ -17,4 +17,7 @@ Updated batch info data frame
 \description{
 Fetches and parses the batch output, writes competency extraction data to
 the database via dbCompExtraction(), and updates review_assignment status codes.
+Reviews with a rule-2 conflict (see dbCompExtractionCheckConflicts()) are
+left at statusCode 6 (Extraction conflict pending) instead of 3, which
+also keeps them out of scoring.
 }

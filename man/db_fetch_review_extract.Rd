@@ -15,7 +15,10 @@ db_fetch_review_extract(conn, review_ids, force = FALSE)
 }
 \value{
 Data frame with columns review_id, evaluation_id, evaluation, prompt,
-or NULL if there is nothing to process
+or NULL if there is nothing to process. evaluation has verbatim-repeated
+paragraphs collapsed via dedupe_repeated_paragraphs() before being sent
+to the LLM (see its docs) - this is the prompt input only, not what's
+stored/displayed elsewhere.
 }
 \description{
 Joins review_assignment with the extraction prompt and full evaluation text.

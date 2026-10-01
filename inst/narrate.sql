@@ -262,6 +262,7 @@ CREATE TABLE "competency_text" (
   "text_match" TEXT NOT NULL,
   "start" INTEGER,
   "end" INTEGER,
+  "locate_status" TEXT,  -- NULL = located or not yet processed; 'unlocated' = AI evidence not anchorable to a verbatim span, surfaced for human review
   FOREIGN KEY ("competency_score_id") REFERENCES "competency_score"("id") ON DELETE CASCADE
 );
 
@@ -283,9 +284,13 @@ INSERT INTO "status_codes" ("table", "code", "description", "note") VALUES
   -- review_assignment: AI batch only
   ('review_assignment', -2, 'AI extraction failed',       NULL),
   ('review_assignment', -3, 'AI scoring failed',          NULL),
+  ('review_assignment', -4, 'Extraction conflict unresolved', 'Resolve attempts exhausted (see llm_comp_resolve_run()); needs human review'),
   ('review_assignment',  3, 'Batch extraction complete',  NULL),
   ('review_assignment',  4, 'Batch scoring submitted',    NULL),
   ('review_assignment',  5, 'Batch scoring complete',     NULL),
+  ('review_assignment',  6, 'Extraction conflict pending', 'Rule-2 ("one competency per quote") violation detected by dbCompExtractionCheckConflicts(); needs resolution'),
+  ('review_assignment',  7, 'Conflict resolve batch submitted', 'Rule-2 conflict resolution submitted to batch (see llm_comp_resolve_batch_submit()); batch_resolve_process() moves it to 3, back to 6 for another round, or -4 if attempts exhausted'),
+  ('review_assignment',  8, 'Reanchor batch submitted', 'Paraphrased competency evidence submitted to batch (see llm_comp_reanchor_batch_submit()); batch_reanchor_process() moves it to 3, to 6 if a re-anchor created a rule-2 conflict, or back to 5 if nothing could be re-anchored (unplaced rows are flagged locate_status = ''unlocated'')'),
   -- batch
   ('batch', -3, 'Cancelled',   NULL),
   ('batch', -2, 'Expired',     NULL),
@@ -440,7 +445,14 @@ INSERT INTO "rule" ("id", "title", "description") VALUES
     'competencies. Do not force a match to reach a higher number.'),
   (5, 'Include both positive and negative',
     'The aim is to extract all pieces of text related to a competency ' ||
-    'regardless of sentiment (i.e. positive and negative)');
+    'regardless of sentiment (i.e. positive and negative)'),
+  (6, 'No duplicate or paraphrased text across competencies',
+    'Do not assign the same piece of text - or a reworded restatement of ' ||
+    'the same underlying observation - to more than one competency, even ' ||
+    'if the exact wording differs between occurrences. Before finalizing, ' ||
+    'check each candidate quote against quotes already assigned to other ' ||
+    'competencies; if it describes the same behavior or observation, keep ' ||
+    'it only under the single most specific competency.');
 
 INSERT INTO "rubric" ("id") VALUES (1);
 
@@ -458,4 +470,4 @@ INSERT INTO "rubric_sentiment" ("rubric_id", "sentiment_id") VALUES
   (1, 1), (1, 2), (1, 3), (1, 4), (1, 5);
 
 INSERT INTO "rubric_rule" ("rubric_id", "rule_id", "order") VALUES
-  (1, 1, 1), (1, 2, 2), (1, 3, 3), (1, 4, 4), (1, 5, 5);
+  (1, 1, 1), (1, 2, 2), (1, 3, 3), (1, 4, 4), (1, 5, 5), (1, 6, 6);

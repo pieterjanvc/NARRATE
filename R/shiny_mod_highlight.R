@@ -174,6 +174,16 @@ mod_highlight_strip_tags <- function(html) {
 #' range. Matches are resolved in the order given, so earlier entries in
 #' `matches` get first pick of ambiguous (repeated) occurrences.
 #'
+#' An exact (`fixed = TRUE`) search is tried first; if that fails the match
+#' is retried with a whitespace-tolerant pattern (every run of whitespace in
+#' the needle allowed to match zero or more whitespace characters in
+#' `plainText`). This recovers quotes that were copied from a differently
+#' whitespaced rendering of the same text - e.g. the AI extraction prompt
+#' shows the evaluation with question headers and blank lines, while offsets
+#' are measured against the tag-stripped copy where a `<br>` between two
+#' words collapses to nothing. A genuinely paraphrased quote still matches
+#' nothing and stays `NA`.
+#'
 #' @param plainText Character string to search within (tag-stripped)
 #' @param matches Character vector of verbatim substrings to locate
 #'
@@ -188,6 +198,24 @@ mod_highlight_locate <- function(plainText, matches) {
   starts <- rep(NA_integer_, length(matches))
   ends <- rep(NA_integer_, length(matches))
 
+  # Whitespace-tolerant fallback pattern for one needle: literal characters
+  # are regex-escaped, and every whitespace run becomes "[[:space:]]*".
+  # Restricted to reasonably long needles so a short quote can't spuriously
+  # bridge a word boundary ("team work" matching "teamwork").
+  ws_pattern <- function(needle) {
+    trimmed <- trimws(needle)
+    if (nchar(trimmed) < 15L) {
+      return(NULL)
+    }
+    parts <- strsplit(trimmed, "[[:space:]]+")[[1]]
+    parts <- parts[nzchar(parts)]
+    if (length(parts) < 2) {
+      return(NULL)
+    }
+    escaped <- gsub("(\\W)", "\\\\\\1", parts, perl = TRUE)
+    paste(escaped, collapse = "[[:space:]]*")
+  }
+
   for (i in seq_along(matches)) {
     m <- matches[i]
     if (is.na(m) || !nzchar(m)) {
@@ -195,8 +223,16 @@ mod_highlight_locate <- function(plainText, matches) {
     }
 
     pos <- gregexpr(m, plainText, fixed = TRUE)[[1]]
+
     if (pos[1] == -1) {
-      next
+      pat <- ws_pattern(m)
+      if (is.null(pat)) {
+        next
+      }
+      pos <- gregexpr(pat, plainText, perl = TRUE)[[1]]
+      if (pos[1] == -1) {
+        next
+      }
     }
     lens <- attr(pos, "match.length")
 

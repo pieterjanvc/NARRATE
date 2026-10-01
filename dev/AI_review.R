@@ -48,11 +48,11 @@ assignments <- dbReviewAssignment(
 # STEP 1 — Competency extraction
 # ********************************
 review_ids <- tbl(conn, "review_assignment") |>
-  filter(reviewer_id == 1, statusCode == 0) |>
+  filter(reviewer_id == 1, statusCode == 0, rubric_id == 3) |>
   pull(id)
 
 # Real-time (synchronous):
-# llm_comp_extract_run(conn, review_ids)
+# test <- llm_comp_extract_run(conn, review_ids, verbose = T, force = F)
 
 # Batch (preferred for large sets):
 batch_extract <- llm_comp_extract_batch_submit(conn, review_ids)
@@ -60,14 +60,38 @@ llm_batch_status(batch_extract$id, conn) # poll until statusCode == 3
 batch_status_notify(batch_extract$id, db_path)
 batch_extract_process(batch_extract$id, conn)
 
+# STEP 1b — Resolve rule-2 extraction conflicts
+# **********************************************
+# batch_extract_process() parks any review with a rule-2 ("one competency per
+# quote") conflict at statusCode 6 instead of 3, which also keeps it out of
+# scoring. A review can need more than one resolve round: it drops back to 6
+# if conflicts remain and attempts aren't exhausted, or lands at -4 once they
+# are. Re-run this block until no reviews are left at statusCode 6.
+review_ids_conflict <- tbl(conn, "review_assignment") |>
+  filter(reviewer_id == 1, statusCode == 6) |>
+  pull(id)
+
+# Real-time:
+# test <- llm_comp_resolve_run(conn, review_ids_conflict, verbose = T)
+
+# Batch:
+if (length(review_ids_conflict) > 0) {
+  batch_resolve <- llm_comp_resolve_batch_submit(conn, review_ids_conflict)
+  llm_batch_status(batch_resolve$id, conn) # poll until statusCode == 3
+  batch_status_notify(batch_resolve$id, db_path)
+  batch_resolve_process(batch_resolve$id, conn)
+}
+
 # STEP 2 — Competency scoring
 # *****************************
+# statusCode 3 = extraction complete and conflict-free (either no conflict was
+# found or the resolve step cleared it)
 review_ids_ready <- tbl(conn, "review_assignment") |>
   filter(reviewer_id == 1, statusCode == 3) |>
   pull(id)
 
 # Real-time:
-# llm_comp_score_run(conn, review_ids_ready)
+# test <- llm_comp_score_run(conn, review_ids_ready, verbose = T, force = F)
 
 # Batch:
 batch_score <- llm_comp_score_batch_submit(conn, review_ids_ready)
@@ -77,34 +101,24 @@ batch_score_process(batch_score$id, conn)
 
 # SUMMARY STATS
 # *************
-specificityScaling <- 0.3
-utilScaling <- 1.5
-sentScaling <- 0.3
-
-tbl(conn, "review_assignment") |>
+# Uses review_scores() (R/analysis.R) so this matches the ANALYSIS tab's
+# quality score instead of computing a separate formula.
+review_ids_complete <- tbl(conn, "review_assignment") |>
   filter(statusCode == 5) |>
-  left_join(
-    tbl(conn, "competency_score") |>
-      group_by(id = review_assignment_id) |>
-      summarise(
-        score = sum(specificity * specificityScaling),
-        nComp = n(),
-        minSpecificity = min(specificity),
-        maxSpecificity = max(specificity),
-        meanSpecificity = mean(specificity)
-      ),
-    by = "id"
-  ) |>
+  pull(id)
+
+eval_length <- tbl(conn, "review_assignment") |>
+  filter(id %in% local(review_ids_complete)) |>
+  select(review_id = id, evaluation_id) |>
   left_join(
     tbl(conn, "answer") |>
-      group_by(id = evaluation_id) |>
+      group_by(evaluation_id) |>
       summarise(nchar = sum(nchar(answer_txt_redacted))),
     by = "evaluation_id"
   ) |>
-  collect() |>
-  mutate(
-    score = score +
-      utility_score_value * utilScaling +
-      sentiment_score_value * sentScaling
-  ) |>
+  collect()
+
+review_scores(conn, review_ids_complete) |>
+  mutate(score = coverage + avg_specificity + utility) |>
+  left_join(eval_length, by = "review_id") |>
   arrange(desc(score))

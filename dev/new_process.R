@@ -1,7 +1,7 @@
 # ARGUMENTS
 # *********
 seed <- 20260504
-db_path <- "local/narrate-ai.db"
+db_path <- "local/narrate.db"
 # file.remove(db_path)
 dbSetup(db_path, "inst/narrate.sql")
 Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
@@ -17,7 +17,7 @@ combined_data <- readxl::read_xlsx(
 . <- dbAddEvaluations(combined_data, db_path, redactedOnly = T)
 # Add default AI reviewer
 . <- dbReviewerAI(conn, model = "gpt-5.1")
-. <- dbReviewerHuman(conn, username = c("TK", "AW", "KM", "PJ"))
+. <- dbReviewerHuman(conn, username = c("TK", "AW", "KM", "test"))
 # The initial rubric is seeded directly by inst/narrate.sql; link its prompts
 rubric_id <- tbl(conn, "rubric") |>
   summarise(id = max(id, na.rm = TRUE)) |>
@@ -48,14 +48,14 @@ evalSample <- tbl(conn, "evaluator") |>
 #   pull(id)
 
 # #Assign
-# evalSample <- c(1115, 336, 1577, 937)
+evalSample <- c(101, 129, 178, 1652, 2061, 2084)
 
 for (i in 1:5) {
   assingments <- dbReviewAssignment(
     conn,
     reviewer_id = i,
     evaluation_id = evalSample,
-    rubric_id = 1,
+    rubric_id = 3,
     redacted = T,
     include_questions = T
   )

@@ -1,6 +1,6 @@
 Package: NARRATE
 Title: Narrative Assessment Review and Refinement using AI to support Teaching and Evaluation
-Version: 0.2.0
+Version: 0.2.2
 Authors@R: 
     person("PJ", "Van Camp", , "pjvancamp@hms.harvard.edu", role = c("aut", "cre"))
 Description: Build an artificial intelligence powered platform to analyze the 
@@ -20,7 +20,6 @@ Suggests:
   rsconnect
 Imports:
   bslib,
-  callr,
   dplyr,
   DT,
   ggplot2,
@@ -31,6 +30,7 @@ Imports:
   keyring,
   pins,
   pkgload,
+  processx,
   readxl,
   rlang,
   RSQLite,
@@ -39,3 +39,4 @@ Imports:
   stringr,
   sqlife
 Config/roxygen2/version: 8.0.0
+RoxygenNote: 7.3.3
