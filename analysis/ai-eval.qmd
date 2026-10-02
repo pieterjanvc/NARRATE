@@ -1,0 +1,49 @@
+---
+title: "AI – Human Concordance"
+format: html
+execute:
+  echo: false
+---
+
+```{r}
+library(knitr)
+library(glue)
+library(sqlife)
+library(dplyr)
+library(htmltools)
+```
+
+# Data Info
+```{r}
+db <- ifelse(interactive(), "local/narrate.db",  "../local/narrate.db")
+
+rubric_version <- 3
+last_modified <- format(file.info(db)$mtime, "%B %-d, %Y")
+
+conn <- dbGetConn(db)
+
+review_info <- tbl(conn, "review_assignment") |>
+  left_join(
+    tbl(conn, "reviewer") |> select(reviewer_id = id, human, username),
+    by = "reviewer_id"
+  ) |>
+  left_join(
+    tbl(conn, "evaluation") |> select(evaluation_id = id, summary_flg),
+    by = "evaluation_id"
+  ) |>
+  filter(
+    ((human == 1 & rubric_id == rubric_version & statusCode == 2) |
+      (human == 0 & rubric_id == rubric_version & statusCode == 5)) &
+      summary_flg == 0
+  ) |>
+  collect()
+
+reviews_by_user <- review_info |> group_by(reviewer_id, username) |> summarise(n = n(), .groups = "drop")
+reviews_by_user |> kable()
+HTML(glue("Data last modified {last_modified} with latest rubric {rubric_version}"))
+```
+
+
+```{r}
+dbFinish(conn)
+```
