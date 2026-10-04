@@ -6,14 +6,18 @@ execute:
 ---
 
 ```{r}
+#| message: false
+#| warning: false
 library(knitr)
 library(glue)
 library(sqlife)
 library(dplyr)
 library(htmltools)
+pkgload::load_all(here::here(), quiet = TRUE)
 ```
 
-# Data Info
+## Data Info
+Number of **formative** reviews per reviewer 
 ```{r}
 db <- ifelse(interactive(), "local/narrate.db",  "../local/narrate.db")
 
@@ -40,9 +44,90 @@ review_info <- tbl(conn, "review_assignment") |>
 
 reviews_by_user <- review_info |> group_by(reviewer_id, username) |> summarise(n = n(), .groups = "drop")
 reviews_by_user |> kable()
-HTML(glue("Data last modified {last_modified} with latest rubric {rubric_version}"))
+HTML(glue("Data last modified {last_modified} - rubric version {rubric_version}"))
 ```
 
+## Table 1: AI – Human Concordance (n = subset of formative evaluations we all coded)
+```{r}
+# Evaluations reviewed by every reviewer (AI + all humans)
+n_reviewers <- n_distinct(review_info$reviewer_id)
+shared_evals <- review_info |>
+  distinct(evaluation_id, reviewer_id) |>
+  count(evaluation_id) |>
+  filter(n == n_reviewers) |>
+  pull(evaluation_id)
+
+shared_reviews <- review_info |>
+  filter(evaluation_id %in% shared_evals) |>
+  select(review_id = id, evaluation_id, human, sentiment = sentiment_score_value)
+
+# Quality score on a 0-100 scale (sum of weighted, normalized components)
+scores <- shared_reviews |>
+  left_join(
+    review_scores(conn, shared_reviews$review_id) |> select(-reviewer_id),
+    by = "review_id"
+  ) |>
+  mutate(quality = 100 * (coverage + avg_specificity + utility))
+
+# Quartiles of evaluations based on their mean quality score across all raters
+eval_quartiles <- scores |>
+  group_by(evaluation_id) |>
+  summarise(eval_mean = mean(quality), .groups = "drop") |>
+  mutate(quartile = ntile(eval_mean, 4))
+scores <- scores |> left_join(eval_quartiles, by = "evaluation_id")
+
+# Means across reviews; SDs are within-evaluation (between raters), averaged
+# across evaluations
+summarise_scores <- function(df, var, label) {
+  df <- df |> mutate(value = {{ var }})
+  per_eval <- df |>
+    group_by(evaluation_id) |>
+    summarise(
+      sd_all = sd(value),
+      sd_human = sd(value[human == 1]),
+      .groups = "drop"
+    )
+  tibble(
+    Measure = label,
+    mean_all = mean(df$value),
+    mean_ai = mean(df$value[df$human == 0]),
+    mean_human = mean(df$value[df$human == 1]),
+    sd_all = mean(per_eval$sd_all),
+    sd_human = mean(per_eval$sd_human)
+  )
+}
+
+quartile_labels <- c("1st", "2nd", "3rd", "4th")
+table1 <- bind_rows(
+  summarise_scores(scores, quality, "Quality Score"),
+  lapply(1:4, function(q) {
+    summarise_scores(
+      scores |> filter(quartile == q),
+      quality,
+      glue("&nbsp;&nbsp;&nbsp;{quartile_labels[q]} Quartile")
+    )
+  }),
+  summarise_scores(scores, sentiment, "Sentiment Score")
+)
+
+table1 |>
+  kable(
+    digits = 1,
+    escape = FALSE,
+    col.names = c(
+      "",
+      "Mean Score for All Raters",
+      "Mean Score for AI Rater",
+      "Mean Score for Human Raters",
+      "Standard Deviation for All Raters",
+      "Standard Deviation for Human Raters"
+    )
+  )
+HTML(glue(
+  "n = {length(shared_evals)} evaluations, {n_reviewers} reviewers ",
+  "({n_distinct(review_info$reviewer_id[review_info$human == 1])} human)"
+))
+```
 
 ```{r}
 dbFinish(conn)
