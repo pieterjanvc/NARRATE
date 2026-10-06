@@ -1,0 +1,68 @@
+nohup: ignoring input
+2026-10-06 12:23:34 | Found 60 rubric 4 AI assignments, ids 2681 - 2740 
+2026-10-06 12:23:34 | Backup written to local/backup/narrate_pre-rubric4-ai_20261006-122334.db 
+2026-10-06 12:23:34 | STEP 1 extraction: submitting 60 reviews 
+Uploading 60 requests...
+Creating batch job...
+2026-10-06 12:23:40 |   batch 24 submitted, PushOver monitor launched 
+2026-10-06 12:23:40 |   batch 24 statusCode = 2 
+2026-10-06 12:24:40 |   batch 24 statusCode = 2 
+2026-10-06 12:25:41 |   batch 24 statusCode = 2 
+2026-10-06 12:26:41 |   batch 24 statusCode = 2 
+2026-10-06 12:27:41 |   batch 24 statusCode = 2 
+2026-10-06 12:28:41 |   batch 24 statusCode = 2 
+2026-10-06 12:29:41 |   batch 24 statusCode = 2 
+2026-10-06 12:30:41 |   batch 24 statusCode = 2 
+2026-10-06 12:31:42 |   batch 24 statusCode = 2 
+2026-10-06 12:32:42 |   batch 24 statusCode = 3 
+2026-10-06 12:32:42 | STEP 1 extraction: processing results 
+# A tibble: 2 × 2
+  statusCode     n
+       <int> <int>
+1          3    23
+2          6    37
+2026-10-06 12:32:58 | STEP 1c: no extraction failures to retry 
+2026-10-06 12:32:58 | STEP 1b: resolving 37 conflicted reviews 
+2026-10-06 12:33:06 |   batch 25 statusCode = 2 
+2026-10-06 12:34:06 |   batch 25 statusCode = 2 
+2026-10-06 12:35:06 |   batch 25 statusCode = 2 
+2026-10-06 12:36:06 |   batch 25 statusCode = 2 
+2026-10-06 12:37:06 |   batch 25 statusCode = 2 
+2026-10-06 12:38:06 |   batch 25 statusCode = 2 
+2026-10-06 12:39:06 |   batch 25 statusCode = 2 
+2026-10-06 12:40:07 |   batch 25 statusCode = 2 
+2026-10-06 12:41:07 |   batch 25 statusCode = 2 
+2026-10-06 12:42:07 |   batch 25 statusCode = 3 
+# A tibble: 1 × 2
+  statusCode     n
+       <int> <int>
+1          3    60
+2026-10-06 12:42:14 | STEP 1b: no reviews at statusCode 6 
+Warning messages:
+1: ORDER BY is ignored in subqueries without LIMIT
+ℹ Do you need to move arrange() later in the pipeline or use window_order() instead? 
+2: ORDER BY is ignored in subqueries without LIMIT
+ℹ Do you need to move arrange() later in the pipeline or use window_order() instead? 
+3: ORDER BY is ignored in subqueries without LIMIT
+ℹ Do you need to move arrange() later in the pipeline or use window_order() instead? 
+2026-10-06 12:42:15 | STEP 2 scoring: submitting 60 reviews 
+Uploading 60 requests...
+Creating batch job...
+2026-10-06 12:42:19 |   batch 26 submitted, PushOver monitor launched 
+2026-10-06 12:42:19 |   batch 26 statusCode = 2 
+2026-10-06 12:43:19 |   batch 26 statusCode = 2 
+2026-10-06 12:44:19 |   batch 26 statusCode = 2 
+2026-10-06 12:45:19 |   batch 26 statusCode = 2 
+2026-10-06 12:46:19 |   batch 26 statusCode = 2 
+2026-10-06 12:47:20 |   batch 26 statusCode = 2 
+2026-10-06 12:48:20 |   batch 26 statusCode = 2 
+2026-10-06 12:49:20 |   batch 26 statusCode = 2 
+2026-10-06 12:50:20 |   batch 26 statusCode = 3 
+2026-10-06 12:50:20 | STEP 2 scoring: processing results 
+2026-10-06 12:50:24 | PIPELINE COMPLETE - final statusCode breakdown: 
+# A tibble: 1 × 2
+  statusCode     n
+       <int> <int>
+1          5    60
+2026-10-06 12:50:24 | All 60 reviews complete (statusCode 5) 
+Ran 1/1 deferred expressions
