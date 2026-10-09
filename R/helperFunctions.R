@@ -7,7 +7,7 @@
 #'
 #' @param path Path to the (new) NARRATE SQLite database
 #' @param dataset Path to the .xlsx file with the combined evaluation data
-#' @param default_ai (Default = "gpt-5.1") Model name used to create the
+#' @param default_ai (Default = llm_default_model) Model name used to create the
 #' default AI reviewer
 #' @param default_reviewers (Default = c("TK", "AW", "KM", "test")) Usernames
 #' used to create the default human reviewers
@@ -38,7 +38,7 @@
 narrate_init <- function(
   path,
   dataset,
-  default_ai = "gpt-5.1",
+  default_ai = llm_default_model,
   default_reviewers = c("TK", "AW", "KM", "test"),
   n_assigned = 3,
   id_assigned = NULL,
@@ -639,7 +639,7 @@ batch_status_notify <- function(
     env = c(
       "current",
       R_LIBS = libs, R_LIBS_USER = libs, R_LIBS_SITE = libs,
-      HMS_AZURE_API = Sys.getenv("HMS_AZURE_API"),
+      HUIT_API_NARRATE = Sys.getenv("HUIT_API_NARRATE"),
       PUSHOVER_URL = auth$url, PUSHOVER_KEY = auth$key, PUSHOVER_USER = auth$user
     ),
     stdout = log_path,

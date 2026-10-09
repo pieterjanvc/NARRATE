@@ -7,8 +7,8 @@
 llm_comp_score_run(
   conn,
   review_ids,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   verbose = FALSE,
   force = FALSE
 )
@@ -18,9 +18,9 @@ llm_comp_score_run(
 
 \item{review_ids}{Integer vector of review_assignment IDs to process}
 
-\item{model}{Azure deployment name. Default = "gpt-5.1"}
+\item{model}{OpenAI model name. Default = llm_default_model}
 
-\item{endpoint}{Azure endpoint base URL}
+\item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
 
 \item{verbose}{Print progress messages. Default = FALSE}
 

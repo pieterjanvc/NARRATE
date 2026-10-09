@@ -2,24 +2,24 @@
 % Please edit documentation in R/llm.R
 \name{llm_batch_upload}
 \alias{llm_batch_upload}
-\title{Upload a JSONL file to the Azure OpenAI Files API}
+\title{Upload a JSONL file to the OpenAI Files API}
 \usage{
 llm_batch_upload(
   jsonl_content,
-  endpoint = "https://azure-ai.hms.edu",
-  api_key = Sys.getenv("HMS_AZURE_API")
+  endpoint = llm_default_endpoint,
+  api_key = Sys.getenv("HUIT_API_NARRATE")
 )
 }
 \arguments{
 \item{jsonl_content}{Output of llm_batch_build_jsonl()}
 
-\item{endpoint}{Azure endpoint base URL}
+\item{endpoint}{Default = llm_default_endpoint. Gateway base URL}
 
-\item{api_key}{API key. Default = HMS_AZURE_API env var}
+\item{api_key}{API key. Default = HUIT_API_NARRATE env var}
 }
 \value{
 File ID string
 }
 \description{
-Upload a JSONL file to the Azure OpenAI Files API
+Upload a JSONL file to the OpenAI Files API
 }

@@ -7,8 +7,8 @@
 llm_comp_score(
   extractions,
   prompt,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   debug = FALSE
 )
 }
@@ -18,9 +18,9 @@ each element has cIndex (integer order position within the rubric) and text (cha
 
 \item{prompt}{System prompt (scoring instructions)}
 
-\item{model}{Azure deployment name. Default = "gpt-5.1"}
+\item{model}{OpenAI model name. Default = llm_default_model}
 
-\item{endpoint}{Azure endpoint base URL}
+\item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
 
 \item{debug}{Return raw model output text as well. Default = FALSE}
 }

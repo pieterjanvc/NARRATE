@@ -10,7 +10,7 @@ llm_batch_build_jsonl(requests, model)
 \item{requests}{Named list; names become custom_ids, each element is a
 responses API body (instructions, input, text format params, etc.)}
 
-\item{model}{Azure deployment name (added to every request body)}
+\item{model}{OpenAI model name (added to every request body)}
 }
 \value{
 Single character string (JSONL, one JSON object per line)

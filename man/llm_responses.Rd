@@ -2,14 +2,14 @@
 % Please edit documentation in R/llm.R
 \name{llm_responses}
 \alias{llm_responses}
-\title{Call the Azure OpenAI responses API}
+\title{Call the OpenAI responses API}
 \usage{
 llm_responses(
   input,
   instructions,
   log,
-  model = "gpt-5-mini",
-  endpoint = "https://azure-ai.hms.edu"
+  model = llm_default_model,
+  endpoint = llm_default_endpoint
 )
 }
 \arguments{
@@ -19,15 +19,15 @@ llm_responses(
 
 \item{log}{If set, token usage is appended to this CSV file}
 
-\item{model}{Default = gpt-5-mini. Azure deployment name}
+\item{model}{Default = llm_default_model. OpenAI model name}
 
-\item{endpoint}{Default = https://azure-ai.hms.edu. Azure endpoint base URL}
+\item{endpoint}{Default = llm_default_endpoint. Gateway base URL}
 }
 \value{
 Parsed response list
 }
 \description{
-Note that this function expects an environment variable HMS_AZURE_API
+Note that this function expects an environment variable HUIT_API_NARRATE
 that contains the API key. You can set this up using
-\code{Sys.setenv(HMS_AZURE_API = "API token here")}
+\code{Sys.setenv(HUIT_API_NARRATE = "API token here")}
 }

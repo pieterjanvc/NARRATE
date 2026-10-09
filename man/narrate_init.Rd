@@ -7,7 +7,7 @@
 narrate_init(
   path,
   dataset,
-  default_ai = "gpt-5.1",
+  default_ai = llm_default_model,
   default_reviewers = c("TK", "AW", "KM", "test"),
   n_assigned = 3,
   id_assigned = NULL,
@@ -22,7 +22,7 @@ narrate_init(
 
 \item{dataset}{Path to the .xlsx file with the combined evaluation data}
 
-\item{default_ai}{(Default = "gpt-5.1") Model name used to create the
+\item{default_ai}{(Default = llm_default_model) Model name used to create the
 default AI reviewer}
 
 \item{default_reviewers}{(Default = c("TK", "AW", "KM", "test")) Usernames

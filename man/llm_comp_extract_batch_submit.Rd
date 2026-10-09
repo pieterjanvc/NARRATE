@@ -7,9 +7,9 @@
 llm_comp_extract_batch_submit(
   conn,
   review_ids,
-  model = "gpt-5.1-batch",
-  endpoint = "https://azure-ai.hms.edu",
-  api_key = Sys.getenv("HMS_AZURE_API"),
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
+  api_key = Sys.getenv("HUIT_API_NARRATE"),
   verbose = FALSE,
   force = FALSE
 )
@@ -19,11 +19,11 @@ llm_comp_extract_batch_submit(
 
 \item{review_ids}{Integer vector of review_assignment IDs to process}
 
-\item{model}{Azure batch deployment name. Default = "gpt-5.1-batch"}
+\item{model}{OpenAI model name. Default = llm_default_model}
 
-\item{endpoint}{Azure endpoint base URL}
+\item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
 
-\item{api_key}{API key. Default = HMS_AZURE_API env var}
+\item{api_key}{API key. Default = HUIT_API_NARRATE env var}
 
 \item{verbose}{Print progress messages. Default = FALSE}
 

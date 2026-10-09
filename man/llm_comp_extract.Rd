@@ -7,8 +7,8 @@
 llm_comp_extract(
   evaluation_text,
   prompt,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   debug = FALSE
 )
 }
@@ -17,9 +17,9 @@ llm_comp_extract(
 
 \item{prompt}{System prompt (extraction instructions)}
 
-\item{model}{Azure deployment name. Default = "gpt-5.1"}
+\item{model}{OpenAI model name. Default = llm_default_model}
 
-\item{endpoint}{Azure endpoint base URL}
+\item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
 
 \item{debug}{Return raw model output text as well. Default = FALSE}
 }
@@ -33,7 +33,7 @@ List with:
 }
 }
 \description{
-Calls the Azure responses API and parses the JSON output into a structured
+Calls the OpenAI responses API and parses the JSON output into a structured
 extraction list. Shared by llm_comp_extract_run() and used as the real-time
 counterpart of the batch extraction workflow.
 }
