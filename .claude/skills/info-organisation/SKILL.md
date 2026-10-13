@@ -47,8 +47,8 @@ Use this to know where to look for files, and avoid loading unnecessary ones
   - `./inst/prompt_comp_extract` and `./inst/prompt_comp_score`: AI review
     prompt templates (contains `{}` placeholders for the `glue` library to fill
     in during runtime)
-- `./local`: ConContains files not tracked by github like SQLite databases used
-  for dev / testing
+- `./local`: Contains files not tracked by github like SQLite databases used for
+  production / dev / testing. `narrate.db` is the default production database.
 - `./man`: R manuals for the package functions. Most functions have roxygen2
   docstrings so it might be better to use those as a reference instead.
 - `./R`: The main folder of this project. It contains all R functions needed to
@@ -125,3 +125,7 @@ here.
 - When developing shiny apps, don't test by starting a server (e.g. chromium). A
   human coder will do this unless specifically instructed. You can do checks for
   syntax (parsing) and small tests for functions.
+- The project uses `sqlife::dbGetConn()` to connect to databases which allows it
+  to use that library's insert/update/delete functions. Note that a script
+  calling this should always end with `sqlife::dbFinish(conn)` to ensure clean
+  DB exit
