@@ -8,8 +8,8 @@ llm_batch_status(
   batch_id,
   conn,
   check = TRUE,
-  endpoint = "https://azure-ai.hms.edu",
-  api_key = Sys.getenv("HMS_AZURE_API")
+  endpoint = llm_default_endpoint,
+  api_key = Sys.getenv("HUIT_API_NARRATE")
 )
 }
 \arguments{
@@ -19,13 +19,13 @@ llm_batch_status(
 
 \item{check}{Query the API for an updated status. Default = TRUE}
 
-\item{endpoint}{Azure endpoint base URL}
+\item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
 
-\item{api_key}{API key. Default = HMS_AZURE_API env var}
+\item{api_key}{API key. Default = HUIT_API_NARRATE env var}
 }
 \value{
 Updated batch info data frame
 }
 \description{
-Queries the Azure batch API and updates the batch table in the database.
+Queries the OpenAI batch API and updates the batch table in the database.
 }

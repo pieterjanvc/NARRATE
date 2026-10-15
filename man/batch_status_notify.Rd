@@ -9,7 +9,8 @@ batch_status_notify(
   db_path,
   feq_sec = 60,
   max_wait = 2 * 3600,
-  pkg_path = here::here()
+  pkg_path = here::here(),
+  work_dir = file.path(dirname(normalizePath(db_path, mustWork = FALSE)), "batch_notify")
 )
 }
 \arguments{
@@ -19,18 +20,35 @@ batch_status_notify(
 
 \item{feq_sec}{(Default = 60) Polling interval in seconds}
 
-\item{max_wait}{(Default = 2 hours) Maximum time in seconds before killing the process}
+\item{max_wait}{(Default = 2 hours) Maximum time in seconds before giving up}
 
 \item{pkg_path}{(Default = here::here()) Path to the package source, loaded
-with pkgload::load_all() in the background process so that dev-only
-functions (e.g. llm_batch_status) are available there too}
+with pkgload::load_all() in the monitor process so that dev-only functions
+(e.g. llm_batch_status) are available there too}
+
+\item{work_dir}{(Default = a "batch_notify" folder next to db_path) Where the
+generated monitor script and its log are written}
 }
 \value{
-Invisibly returns the background process handle (callr r_bg object)
+Invisibly, a list with the monitor's \code{process} (processx handle),
+\code{script} path, and \code{log} path
 }
 \description{
-Polls llm_batch_status() in a background process and notifies once the
+Polls llm_batch_status() in a detached R process and notifies once the
 batch completes (statusCode 3), fails/expires/cancels (statusCode < 0), or
 the max_wait is reached. Content-agnostic - works for any batch step
 (extract, resolve, score).
+}
+\details{
+The monitor is launched as a fully detached \code{Rscript} process
+(\code{cleanup = FALSE}, \code{supervise = FALSE}) running a small script written to
+\code{work_dir} - not a \code{callr::r_bg()} closure. \code{callr::r_bg()} keeps its
+bootstrap script in the \emph{caller's} session tempdir, which R deletes on
+exit, so an r_bg monitor dies the moment a submit-and-return script
+finishes. Writing a standalone script to a persistent folder and inheriting
+the caller's library paths via \code{R_LIBS} lets the monitor outlive the
+calling session. The PushOver credentials are read from the keyring once
+here and passed to the detached process as environment variables (not
+written into the on-disk script), so it never touches the keyring itself.
+The generated script deletes itself on start.
 }

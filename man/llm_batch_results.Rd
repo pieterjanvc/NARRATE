@@ -6,16 +6,16 @@
 \usage{
 llm_batch_results(
   file_output_id,
-  endpoint = "https://azure-ai.hms.edu",
-  api_key = Sys.getenv("HMS_AZURE_API")
+  endpoint = llm_default_endpoint,
+  api_key = Sys.getenv("HUIT_API_NARRATE")
 )
 }
 \arguments{
 \item{file_output_id}{output_file_id from the completed batch status object}
 
-\item{endpoint}{Azure endpoint base URL}
+\item{endpoint}{Default = llm_default_endpoint. Gateway base URL}
 
-\item{api_key}{API key. Default = HMS_AZURE_API env var}
+\item{api_key}{API key. Default = HUIT_API_NARRATE env var}
 }
 \value{
 Named list keyed by custom_id; each element is the parsed response object

@@ -2,16 +2,15 @@
 % Please edit documentation in R/llm.R
 \name{llm_chat_completion}
 \alias{llm_chat_completion}
-\title{Call the Azure OpenAI chat completions API}
+\title{Call the OpenAI chat completions API}
 \usage{
 llm_chat_completion(
   user,
   system,
   log,
-  model = "gpt-4o-1120",
+  model = llm_default_model,
   maxTokens = 500,
-  version = "2024-10-21",
-  endpoint = "https://azure-ai.hms.edu"
+  endpoint = llm_default_endpoint
 )
 }
 \arguments{
@@ -21,19 +20,17 @@ llm_chat_completion(
 
 \item{log}{If set, token usage is appended to this CSV file}
 
-\item{model}{Default = gpt-4o-1120. Azure deployment name}
+\item{model}{Default = llm_default_model. OpenAI model name}
 
 \item{maxTokens}{Default = 500. Maximum tokens to return}
 
-\item{version}{Default = 2024-10-21. API version}
-
-\item{endpoint}{Default = https://azure-ai.hms.edu. Azure endpoint base URL}
+\item{endpoint}{Default = llm_default_endpoint. Gateway base URL}
 }
 \value{
 Parsed response list
 }
 \description{
-Note that this function expects an environment variable HMS_AZURE_API
+Note that this function expects an environment variable HUIT_API_NARRATE
 that contains the API key. You can set this up using
-\code{Sys.setenv(HMS_AZURE_API = "API token here")}
+\code{Sys.setenv(HUIT_API_NARRATE = "API token here")}
 }

@@ -1,31 +1,31 @@
-# Move the 2026-10-02 human review batch from rubric 3 to rubric 4.
+# Move the rubric 4 review set to rubric 5 (new utility scale).
 #
-# Scope: the 60 non-summary evaluations assigned to human reviewers on
-# 2026-10-02 under rubric 3 (the earlier 11 evaluations stay on rubric 3).
-#   - Human reviewers 2, 3, 4 ('test' reviewer 5 is excluded) get a rubric 4
-#     assignment for each evaluation. Completed (2) / flagged (-1) rubric 3
-#     reviews are copied over (scores mapped to rubric 4 ids), others start at 0.
-#   - AI (reviewer 1) gets a new rubric 4 assignment (status 0) per evaluation.
-#   - Unfinished rubric 3 human assignments (status 0/1) on these evaluations
-#     are deleted (all reviewers, incl. 'test').
-#
-# Copied reviews are inserted as status 0 (created/modified = now), scores are
-# copied, and only then the status is set and modified is updated to now.
+# Scope: the 60 evaluations assigned under rubric 4.
+#   - Rubric 5 is completed first: rules 1-6 (as in rubric 4) are attached,
+#     prompts are regenerated and linked, and prev_id / info are set.
+#   - A new AI reviewer 'gpt-6-luna' is added.
+#   - Human reviewers 2, 3, 4 ('test' reviewer 5 is excluded) and gpt-6-luna
+#     get a rubric 5 assignment (status 0) for each evaluation.
+#   - Completed (2) / flagged (-1) rubric 4 human reviews are copied over as
+#     partial reviews: competency scores + evidence text, sentiment, note and
+#     duration are copied, utility is NOT (the scale changed). Their status is
+#     set to 1 (In progress).
+#   - Unstarted rubric 4 human assignments (status 0) are deleted.
 #
 # A backup is written to local/backup/ and an id mapping to dev/ai_dev/.
 #
-# Usage:  Rscript dev/ai_dev/copy_rubric3_to_4.R
-#         RUBRIC4_DB=path/to/copy.db Rscript dev/ai_dev/copy_rubric3_to_4.R
+# Usage:  Rscript dev/ai_dev/copy_rubric4_to_5.R
+#         RUBRIC5_DB=path/to/copy.db Rscript dev/ai_dev/copy_rubric4_to_5.R
 
 suppressMessages(pkgload::load_all(here::here(), quiet = TRUE))
 suppressMessages(library(dplyr))
 
-db_path <- Sys.getenv("RUBRIC4_DB", "local/narrate.db")
-old_rubric <- 3L
-new_rubric <- 4L
-batch_date <- "2026-10-02"
-ai_reviewer <- 1L
+db_path <- Sys.getenv("RUBRIC5_DB", "local/narrate.db")
+old_rubric <- 4L
+new_rubric <- 5L
 human_reviewers <- c(2L, 3L, 4L)
+ai_model <- "gpt-6-luna"
+ra_inprogress <- 1L
 n_expected <- 60L
 
 conn <- dbGetConn(db_path)
@@ -44,44 +44,44 @@ if (n_existing > 0) {
   stop("Rubric ", new_rubric, " already has ", n_existing, " assignments")
 }
 
+n_rules <- tbl(conn, "rubric_rule") |>
+  filter(rubric_id == new_rubric) |>
+  count() |>
+  pull(n)
+if (n_rules > 0) {
+  stop("Rubric ", new_rubric, " already has ", n_rules, " rules")
+}
+
+n_ai <- tbl(conn, "reviewer") |>
+  filter(model == ai_model | username == ai_model) |>
+  count() |>
+  pull(n)
+if (n_ai > 0) stop("Reviewer '", ai_model, "' already exists")
+
 # ── Scope ────────────────────────────────────────────────────────────────────
 src_all <- tbl(conn, "review_assignment") |>
-  filter(rubric_id == old_rubric) |>
-  inner_join(
-    tbl(conn, "reviewer") |> filter(human == 1) |> select(reviewer_id = id),
-    by = "reviewer_id"
-  ) |>
-  inner_join(
-    tbl(conn, "evaluation") |>
-      filter(summary_flg == 0) |>
-      select(evaluation_id = id),
-    by = "evaluation_id"
-  ) |>
+  filter(rubric_id == old_rubric, reviewer_id %in% human_reviewers) |>
   collect()
 
-eval_ids <- src_all |>
-  group_by(evaluation_id) |>
-  summarise(first_created = min(created)) |>
-  filter(substr(first_created, 1, 10) == batch_date) |>
-  pull(evaluation_id) |>
-  sort()
-stopifnot(length(eval_ids) == n_expected)
-
-src_all <- src_all |> filter(evaluation_id %in% eval_ids)
-stopifnot(!anyDuplicated(src_all[, c("evaluation_id", "reviewer_id")]))
-
-src_done <- src_all |>
-  filter(reviewer_id %in% human_reviewers, statusCode %in% c(2L, -1L))
-src_open <- src_all |> filter(statusCode %in% c(0L, 1L))
-stopifnot(nrow(src_done) + nrow(src_open) == nrow(src_all))
-
-# All in-scope reviewer x evaluation combinations must exist under rubric 3
+eval_ids <- sort(unique(src_all$evaluation_id))
 stopifnot(
-  nrow(src_all |> filter(reviewer_id %in% human_reviewers)) ==
-    length(human_reviewers) * n_expected
+  length(eval_ids) == n_expected,
+  nrow(src_all) == length(human_reviewers) * n_expected,
+  !anyDuplicated(src_all[, c("evaluation_id", "reviewer_id")]),
+  # AI rubric 4 set covers the same evaluations
+  setequal(
+    eval_ids,
+    tbl(conn, "review_assignment") |>
+      filter(rubric_id == old_rubric, !reviewer_id %in% human_reviewers) |>
+      pull(evaluation_id)
+  )
 )
 
-# ── Lookup maps (rubric 3 id -> rubric 4 id) ─────────────────────────────────
+src_done <- src_all |> filter(statusCode %in% c(2L, -1L))
+src_open <- src_all |> filter(statusCode == 0L)
+stopifnot(nrow(src_done) + nrow(src_open) == nrow(src_all))
+
+# ── Lookup maps (rubric 4 id -> rubric 5 id) ─────────────────────────────────
 comp_map <- tbl(conn, "rubric_competency") |>
   filter(rubric_id %in% c(old_rubric, new_rubric)) |>
   inner_join(
@@ -96,20 +96,16 @@ comp_map <- inner_join(
   by = "cID"
 )
 
-score_map <- function(link_tbl, score_tbl, id_col) {
-  m <- tbl(conn, link_tbl) |>
-    filter(rubric_id %in% c(old_rubric, new_rubric)) |>
-    select(rubric_id, score_id = all_of(id_col)) |>
-    inner_join(tbl(conn, score_tbl) |> select(score_id = id, value), by = "score_id") |>
-    collect()
-  inner_join(
-    m |> filter(rubric_id == old_rubric) |> select(old_id = score_id, value),
-    m |> filter(rubric_id == new_rubric) |> select(new_id = score_id, value),
-    by = "value"
-  )
-}
-util_map <- score_map("rubric_utility", "utility", "utility_id")
-sent_map <- score_map("rubric_sentiment", "sentiment", "sentiment_id")
+sent_map <- tbl(conn, "rubric_sentiment") |>
+  filter(rubric_id %in% c(old_rubric, new_rubric)) |>
+  select(rubric_id, score_id = sentiment_id) |>
+  inner_join(tbl(conn, "sentiment") |> select(score_id = id, value), by = "score_id") |>
+  collect()
+sent_map <- inner_join(
+  sent_map |> filter(rubric_id == old_rubric) |> select(old_id = score_id, value),
+  sent_map |> filter(rubric_id == new_rubric) |> select(new_id = score_id, value),
+  by = "value"
+)
 
 # Source competency scores / texts for the reviews to copy
 src_cs <- tbl(conn, "competency_score") |>
@@ -121,30 +117,36 @@ src_ct <- tbl(conn, "competency_text") |>
 
 stopifnot(
   all(src_cs$competency_id %in% comp_map$old_id),
-  all(na.omit(src_done$utility_score_id) %in% util_map$old_id),
   all(na.omit(src_done$sentiment_score_id) %in% sent_map$old_id),
   !anyDuplicated(src_cs[, c("review_assignment_id", "competency_id")])
 )
 
-# Open rubric 3 assignments to delete; check for partial scores
-del_cs <- tbl(conn, "competency_score") |>
-  filter(review_assignment_id %in% local(src_open$id)) |>
+# Open rubric 4 assignments to delete: must not hold any scores
+stopifnot(
+  tbl(conn, "competency_score") |>
+    filter(review_assignment_id %in% local(src_open$id)) |>
+    count() |>
+    pull(n) ==
+    0
+)
+
+old_rules <- tbl(conn, "rubric_rule") |>
+  filter(rubric_id == old_rubric) |>
+  arrange(order) |>
   collect()
-del_ct <- tbl(conn, "competency_text") |>
-  filter(competency_score_id %in% local(del_cs$id)) |>
-  collect()
+stopifnot(nrow(old_rules) > 0)
 
 cat(sprintf(
-  "Scope: %d evaluations | copy %d reviews (%d scores, %d texts) | delete %d open rubric %d assignments (%d scores, %d texts)\n",
+  "Scope: %d evaluations | copy %d reviews (%d scores, %d texts) | delete %d open rubric %d assignments | attach %d rules\n",
   length(eval_ids), nrow(src_done), nrow(src_cs), nrow(src_ct),
-  nrow(src_open), old_rubric, nrow(del_cs), nrow(del_ct)
+  nrow(src_open), old_rubric, nrow(old_rules)
 ))
 
 # ── Backup ───────────────────────────────────────────────────────────────────
 backup_path <- file.path(
   "local/backup",
   sprintf(
-    "%s_pre-rubric4-copy_%s.db",
+    "%s_pre-rubric5-copy_%s.db",
     tools::file_path_sans_ext(basename(db_path)),
     format(Sys.time(), "%Y%m%d-%H%M%S")
   )
@@ -154,16 +156,46 @@ stopifnot(file.copy(db_path, backup_path))
 cat("Backup written to", backup_path, "\n")
 
 # ── Transfer (single transaction) ────────────────────────────────────────────
-# 1. New rubric 4 assignments (status 0; created/modified default to now)
-new_human <- expand.grid(
-  evaluation_id = eval_ids,
-  reviewer_id = human_reviewers
+# 1. Complete rubric 5: rules, prompts, provenance
+old_rules |>
+  transmute(rubric_id = new_rubric, rule_id, order) |>
+  tbl_insert(conn, "rubric_rule", commit = FALSE, returnData = FALSE)
+
+prompts <- prompt_generate(conn, rubric_id = new_rubric)
+prompt_extract_id <- dbAddPrompt(
+  prompts$extract, conn,
+  task = "comp_extract", commit = FALSE, showWarning = TRUE
+)
+prompt_score_id <- dbAddPrompt(
+  prompts$score, conn,
+  task = "comp_score", commit = FALSE, showWarning = TRUE
+)
+tbl_update(
+  data.frame(
+    id = new_rubric,
+    prompt_extract_id = prompt_extract_id,
+    prompt_score_id = prompt_score_id,
+    prev_id = old_rubric,
+    info = "4-level utility scale revised (utility 2-4); rest as rubric 4"
+  ),
+  conn,
+  "rubric",
+  commit = FALSE,
+  returnData = FALSE
+)
+
+# 2. New AI reviewer
+ai_reviewer <- tbl_insert(
+  data.frame(human = 0L, model = ai_model, username = ai_model),
+  conn,
+  "reviewer",
+  commit = FALSE
 ) |>
-  left_join(
-    src_all |>
-      select(evaluation_id, reviewer_id, include_questions, redacted),
-    by = c("evaluation_id", "reviewer_id")
-  )
+  pull(id)
+
+# 3. New rubric 5 assignments (status 0; created/modified default to now)
+new_human <- src_all |>
+  select(evaluation_id, reviewer_id, include_questions, redacted)
 new_ai <- data.frame(
   evaluation_id = eval_ids,
   reviewer_id = ai_reviewer,
@@ -174,7 +206,7 @@ new_ra <- bind_rows(new_human, new_ai) |>
   mutate(rubric_id = new_rubric, statusCode = 0L) |>
   tbl_insert(conn, "review_assignment", commit = FALSE)
 
-# 2. Copy scores for completed / flagged reviews
+# 4. Copy competency scores / texts for completed / flagged reviews
 ra_map <- src_done |>
   select(old_ra = id, evaluation_id, reviewer_id) |>
   inner_join(
@@ -219,16 +251,13 @@ if (nrow(src_ct) > 0) {
     tbl_insert(conn, "competency_text", commit = FALSE, returnData = FALSE)
 }
 
-# 3. Complete the copied reviews (status, overall scores, modified = now)
+# 5. Mark copied reviews as in progress (sentiment, note, duration; no utility)
 src_done |>
   inner_join(ra_map |> select(old_ra, new_ra), by = c("id" = "old_ra")) |>
-  left_join(util_map |> select(old_id, new_util = new_id), by = c("utility_score_id" = "old_id")) |>
   left_join(sent_map |> select(old_id, new_sent = new_id), by = c("sentiment_score_id" = "old_id")) |>
   transmute(
     id = new_ra,
-    statusCode,
-    utility_score_id = new_util,
-    utility_score_value,
+    statusCode = ra_inprogress,
     sentiment_score_id = new_sent,
     sentiment_score_value,
     duration,
@@ -237,22 +266,20 @@ src_done |>
   ) |>
   tbl_update(conn, "review_assignment", commit = FALSE, returnData = FALSE)
 
-# 4. Delete open rubric 3 assignments (children first)
-if (nrow(del_ct) > 0) {
-  tbl_delete(del_ct |> select(id), conn, "competency_text", commit = FALSE, returnData = FALSE)
-}
-if (nrow(del_cs) > 0) {
-  tbl_delete(del_cs |> select(id), conn, "competency_score", commit = FALSE, returnData = FALSE)
-}
+# 6. Delete open rubric 4 human assignments (no scores, checked above)
 tbl_delete(src_open |> select(id), conn, "review_assignment", commit = FALSE, returnData = FALSE)
 
-# 5. Verification
-r4 <- tbl(conn, "review_assignment") |> filter(rubric_id == new_rubric) |> collect()
+# 7. Verification
+r5 <- tbl(conn, "review_assignment") |> filter(rubric_id == new_rubric) |> collect()
 stopifnot(
-  nrow(r4) == (length(human_reviewers) + 1) * n_expected,
-  sum(r4$statusCode != 0) == nrow(src_done),
-  all(r4$utility_score_id[!is.na(r4$utility_score_id)] %in% util_map$new_id),
-  all(r4$sentiment_score_id[!is.na(r4$sentiment_score_id)] %in% sent_map$new_id)
+  nrow(r5) == (length(human_reviewers) + 1) * n_expected,
+  sum(r5$statusCode == ra_inprogress) == nrow(src_done),
+  all(r5$statusCode %in% c(0L, ra_inprogress)),
+  all(is.na(r5$utility_score_id)),
+  all(is.na(r5$utility_score_value)),
+  all(r5$sentiment_score_id[!is.na(r5$sentiment_score_id)] %in% sent_map$new_id),
+  sum(!is.na(r5$sentiment_score_id)) == sum(!is.na(src_done$sentiment_score_id)),
+  setequal(r5$reviewer_id, c(human_reviewers, ai_reviewer))
 )
 summ <- function(ra_ids) {
   cs <- tbl(conn, "competency_score") |>
@@ -280,13 +307,11 @@ stopifnot(
   identical(chk$spec_old, chk$spec_new),
   identical(chk$text_old, chk$text_new)
 )
+r5_rubric <- tbl(conn, "rubric") |> filter(id == new_rubric) |> collect()
 stopifnot(
-  tbl(conn, "competency_score") |>
-    filter(review_assignment_id %in% local(r4$id)) |>
-    filter(!competency_id %in% local(comp_map$new_id)) |>
-    count() |>
-    pull(n) ==
-    0,
+  tbl(conn, "rubric_rule") |> filter(rubric_id == new_rubric) |> count() |> pull(n) ==
+    nrow(old_rules),
+  r5_rubric$prev_id == old_rubric,
   tbl(conn, "review_assignment") |>
     filter(id %in% local(src_open$id)) |>
     count() |>
@@ -296,15 +321,13 @@ stopifnot(
 
 # Mapping file for provenance
 write.csv(
-  ra_map |> rename(rubric3_review_id = old_ra, rubric4_review_id = new_ra),
-  "dev/ai_dev/rubric3_to_4_review_map.csv",
-  row.names = FALSE
-)
-write.csv(
-  data.frame(evaluation_id = eval_ids),
-  "dev/ai_dev/rubric4_eval_ids.csv",
+  ra_map |> rename(rubric4_review_id = old_ra, rubric5_review_id = new_ra),
+  "dev/ai_dev/rubric4_to_5_review_map.csv",
   row.names = FALSE
 )
 dbFinish(conn)
 
-cat("Transfer committed\n")
+cat(sprintf(
+  "Transfer committed | AI reviewer id %d | rubric %d prompts: extract %d, score %d\n",
+  ai_reviewer, new_rubric, prompt_extract_id, prompt_score_id
+))

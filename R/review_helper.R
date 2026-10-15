@@ -80,14 +80,14 @@ llm_build_score_body <- function(extractions, prompt) {
 
 #' Extract competencies and verbatim text from a clerkship evaluation
 #'
-#' Calls the Azure responses API and parses the JSON output into a structured
+#' Calls the OpenAI responses API and parses the JSON output into a structured
 #' extraction list. Shared by llm_comp_extract_run() and used as the real-time
 #' counterpart of the batch extraction workflow.
 #'
 #' @param evaluation_text Character string with the evaluation text
 #' @param prompt System prompt (extraction instructions)
-#' @param model Azure deployment name. Default = "gpt-5.1"
-#' @param endpoint Azure endpoint base URL
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
 #' @param debug Return raw model output text as well. Default = FALSE
 #'
 #' @import httr2
@@ -101,18 +101,15 @@ llm_build_score_body <- function(extractions, prompt) {
 llm_comp_extract <- function(
   evaluation_text,
   prompt,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   debug = FALSE
 ) {
   body <- llm_build_extract_body(evaluation_text, prompt)
   body$model <- model
 
-  req <- request(paste0(endpoint, "/openai/v1/responses")) |>
-    req_headers(
-      "Content-Type" = "application/json",
-      "api-key" = Sys.getenv("HMS_AZURE_API")
-    ) |>
+  req <- llm_request("/responses", endpoint) |>
+    req_headers("Content-Type" = "application/json") |>
     req_body_json(body) |>
     req_error(is_error = ~FALSE) |>
     req_perform()
@@ -125,7 +122,7 @@ llm_comp_extract <- function(
   }
 
   resp <- resp_body_json(req)
-  raw_text <- resp$output[[1]]$content[[1]]$text
+  raw_text <- llm_output_text(resp)
   tokens_in <- resp$usage$input_tokens
   tokens_out <- resp$usage$output_tokens
 
@@ -162,8 +159,8 @@ llm_comp_extract <- function(
 #' @param extractions List of extraction items from llm_comp_extract()$data;
 #'   each element has cIndex (integer order position within the rubric) and text (character vector)
 #' @param prompt System prompt (scoring instructions)
-#' @param model Azure deployment name. Default = "gpt-5.1"
-#' @param endpoint Azure endpoint base URL
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
 #' @param debug Return raw model output text as well. Default = FALSE
 #'
 #' @import httr2
@@ -177,18 +174,15 @@ llm_comp_extract <- function(
 llm_comp_score <- function(
   extractions,
   prompt,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   debug = FALSE
 ) {
   body <- llm_build_score_body(extractions, prompt)
   body$model <- model
 
-  req <- request(paste0(endpoint, "/openai/v1/responses")) |>
-    req_headers(
-      "Content-Type" = "application/json",
-      "api-key" = Sys.getenv("HMS_AZURE_API")
-    ) |>
+  req <- llm_request("/responses", endpoint) |>
+    req_headers("Content-Type" = "application/json") |>
     req_body_json(body) |>
     req_error(is_error = ~FALSE) |>
     req_perform()
@@ -201,7 +195,7 @@ llm_comp_score <- function(
   }
 
   resp <- resp_body_json(req)
-  raw_text <- resp$output[[1]]$content[[1]]$text
+  raw_text <- llm_output_text(resp)
   tokens_in <- resp$usage$input_tokens
   tokens_out <- resp$usage$output_tokens
 
@@ -230,14 +224,14 @@ llm_comp_score <- function(
 
 #' Resolve rule-2 conflicts flagged by dbCompExtractionCheckConflicts()
 #'
-#' Calls the Azure responses API and parses the JSON output into a
+#' Calls the OpenAI responses API and parses the JSON output into a
 #' resolutions list. Shared by the live and (future) batch resolve
 #' workflows, mirroring llm_comp_extract()'s structure.
 #'
 #' @param conflicts_text Formatted CONFLICTS section text (build_resolve_conflicts()$text)
 #' @param prompt System prompt (resolve instructions, from prompt_generate_resolve())
-#' @param model Azure deployment name. Default = "gpt-5.1"
-#' @param endpoint Azure endpoint base URL
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
 #' @param debug Return raw model output text as well. Default = FALSE
 #'
 #' @import httr2
@@ -251,18 +245,15 @@ llm_comp_score <- function(
 llm_comp_resolve <- function(
   conflicts_text,
   prompt,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   debug = FALSE
 ) {
   body <- llm_build_resolve_body(conflicts_text, prompt)
   body$model <- model
 
-  req <- request(paste0(endpoint, "/openai/v1/responses")) |>
-    req_headers(
-      "Content-Type" = "application/json",
-      "api-key" = Sys.getenv("HMS_AZURE_API")
-    ) |>
+  req <- llm_request("/responses", endpoint) |>
+    req_headers("Content-Type" = "application/json") |>
     req_body_json(body) |>
     req_error(is_error = ~FALSE) |>
     req_perform()
@@ -275,7 +266,7 @@ llm_comp_resolve <- function(
   }
 
   resp <- resp_body_json(req)
-  raw_text <- resp$output[[1]]$content[[1]]$text
+  raw_text <- llm_output_text(resp)
   tokens_in <- resp$usage$input_tokens
   tokens_out <- resp$usage$output_tokens
 
@@ -303,15 +294,15 @@ llm_comp_resolve <- function(
 
 #' Re-anchor paraphrased competency evidence to a verbatim span
 #'
-#' Calls the Azure responses API asking, for each non-verbatim quote, for the
+#' Calls the OpenAI responses API asking, for each non-verbatim quote, for the
 #' exact span of the evaluation it refers to (or `null`). Parses the JSON
 #' output into an anchors list. Shared by the live and batch re-anchor
 #' workflows, mirroring llm_comp_resolve()'s structure.
 #'
 #' @param reanchor_text Formatted input body (build_reanchor_items()$text)
 #' @param prompt System prompt (inst/prompt_comp_reanchor.md contents)
-#' @param model Azure deployment name. Default = "gpt-5.1"
-#' @param endpoint Azure endpoint base URL
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
 #' @param debug Return raw model output text as well. Default = FALSE
 #'
 #' @import httr2
@@ -327,18 +318,15 @@ llm_comp_resolve <- function(
 llm_comp_reanchor <- function(
   reanchor_text,
   prompt,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   debug = FALSE
 ) {
   body <- llm_build_reanchor_body(reanchor_text, prompt)
   body$model <- model
 
-  req <- request(paste0(endpoint, "/openai/v1/responses")) |>
-    req_headers(
-      "Content-Type" = "application/json",
-      "api-key" = Sys.getenv("HMS_AZURE_API")
-    ) |>
+  req <- llm_request("/responses", endpoint) |>
+    req_headers("Content-Type" = "application/json") |>
     req_body_json(body) |>
     req_error(is_error = ~FALSE) |>
     req_perform()
@@ -351,7 +339,7 @@ llm_comp_reanchor <- function(
   }
 
   resp <- resp_body_json(req)
-  raw_text <- resp$output[[1]]$content[[1]]$text
+  raw_text <- llm_output_text(resp)
   tokens_in <- resp$usage$input_tokens
   tokens_out <- resp$usage$output_tokens
 
@@ -910,13 +898,13 @@ db_record_batch <- function(conn, file_input_id, batch_id, review_ids, review_st
 
 #' Check and update the status of a batch job
 #'
-#' Queries the Azure batch API and updates the batch table in the database.
+#' Queries the OpenAI batch API and updates the batch table in the database.
 #'
 #' @param batch_id Internal batch ID (row id in the batch table)
 #' @param conn DB connection
 #' @param check Query the API for an updated status. Default = TRUE
-#' @param endpoint Azure endpoint base URL
-#' @param api_key API key. Default = HMS_AZURE_API env var
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
+#' @param api_key API key. Default = HUIT_API_NARRATE env var
 #'
 #' @import httr2
 #' @importFrom sqlife tbl_update
@@ -926,8 +914,8 @@ llm_batch_status <- function(
   batch_id,
   conn,
   check = TRUE,
-  endpoint = "https://azure-ai.hms.edu",
-  api_key = Sys.getenv("HMS_AZURE_API")
+  endpoint = llm_default_endpoint,
+  api_key = Sys.getenv("HUIT_API_NARRATE")
 ) {
   batch_info <- tbl(conn, "batch") |> filter(id == local(batch_id)) |> collect()
 
@@ -939,17 +927,20 @@ llm_batch_status <- function(
     "cancelling" = -3, "cancelled" = -3
   )
 
-  resp <- request(paste0(endpoint, "/openai/v1/batches/", batch_info$batch_id)) |>
-    req_headers("api-key" = api_key) |>
+  resp <- llm_request(paste0("/batches/", batch_info$batch_id), endpoint, api_key) |>
     req_error(is_error = ~FALSE) |>
     req_perform() |>
     resp_body_json()
 
   statusCode <- as.integer(status[names(status) == resp$status])
+  if (length(statusCode) == 0) {
+    stop("Unknown batch status: ", resp$status %||% "<none>")
+  }
 
   batch_update <- data.frame(
     id = batch_id,
-    file_output_id = resp$output_file_id,
+    # null until the batch completes
+    file_output_id = resp$output_file_id %||% NA_character_,
     checked = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
     statusCode = statusCode
   )
@@ -994,7 +985,7 @@ batch_results_preprocess <- function(file_output_id) {
     }
 
     rb <- r$response$body
-    raw_text <- rb$output[[1]]$content[[1]]$text
+    raw_text <- llm_output_text(rb)
     tokens_in <- rb$usage$input_tokens
     tokens_out <- rb$usage$output_tokens
 
