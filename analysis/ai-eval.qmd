@@ -21,7 +21,7 @@ Number of **formative** reviews per reviewer
 ```{r}
 db <- ifelse(interactive(), "local/narrate.db",  "../local/narrate.db")
 
-rubric_version <- 3
+rubric_version <- 5
 last_modified <- format(file.info(db)$mtime, "%B %-d, %Y")
 
 conn <- dbGetConn(db)
@@ -127,6 +127,64 @@ HTML(glue(
   "n = {length(shared_evals)} evaluations, {n_reviewers} reviewers ",
   "({n_distinct(review_info$reviewer_id[review_info$human == 1])} human)"
 ))
+```
+
+# AI competency detection across reviews
+
+```{r}
+# Create a table with stats of AI review (GPT 6 luna)
+# - Competency: title
+# - detected_perc: percentage of AI completed reviews that mention this competency
+# - spec_avg: the average specificity if the competency was detected
+# - spec_sd: standard deviation
+ai_model <- "gpt-6-luna"
+
+ai_review_ids <- review_info |>
+  filter(human == 0, username == ai_model) |>
+  pull(id)
+
+# All competencies on the rubric, so undetected ones still show up (0%)
+rubric_comps <- tbl(conn, "rubric_competency") |>
+  filter(rubric_id == rubric_version) |>
+  left_join(
+    tbl(conn, "competency") |> select(competency_id = id, cID, name),
+    by = "competency_id"
+  ) |>
+  select(competency_id, order, name) |>
+  collect()
+
+ai_comp_scores <- tbl(conn, "competency_score") |>
+  filter(review_assignment_id %in% local(ai_review_ids), !is.na(specificity)) |>
+  select(review_assignment_id, competency_id, specificity) |>
+  collect()
+
+comp_detection <- rubric_comps |>
+  left_join(ai_comp_scores, by = "competency_id") |>
+  group_by(order, Competency = name) |>
+  summarise(
+    n_detected = n_distinct(review_assignment_id, na.rm = TRUE),
+    spec_avg = mean(specificity, na.rm = TRUE),
+    spec_sd = sd(specificity, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    detected_perc = 100 * n_detected / length(ai_review_ids),
+    spec_avg = ifelse(n_detected == 0, NA, spec_avg)
+  ) |>
+  arrange(order) |>
+  select(Competency, detected_perc, spec_avg, spec_sd)
+
+comp_detection |>
+  kable(
+    digits = 1,
+    col.names = c(
+      "Competency",
+      "% of AI Reviews Detecting Competency",
+      "Mean Specificity (when detected)",
+      "SD Specificity (when detected)"
+    )
+  )
+HTML(glue("n = {length(ai_review_ids)} formative evaluations reviewed by {ai_model}"))
 ```
 
 ```{r}
