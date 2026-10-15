@@ -41,8 +41,8 @@
 #'
 #' @param conn DB connection
 #' @param review_ids Integer vector of review_assignment IDs to process
-#' @param model Azure deployment name. Default = "gpt-5.1"
-#' @param endpoint Azure endpoint base URL
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Reprocess even if statusCode != 0. Default = FALSE
 #'
@@ -56,8 +56,8 @@
 llm_comp_extract_run <- function(
   conn,
   review_ids,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   verbose = FALSE,
   force = FALSE
 ) {
@@ -118,8 +118,8 @@ llm_comp_extract_run <- function(
 #'
 #' @param conn DB connection
 #' @param review_ids Integer vector of review_assignment IDs to process
-#' @param model Azure deployment name. Default = "gpt-5.1"
-#' @param endpoint Azure endpoint base URL
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
 #' @param max_attempts Maximum resolve attempts per review before giving up. Default = 2
 #' @param verbose Print progress messages. Default = FALSE
 #'
@@ -132,8 +132,8 @@ llm_comp_extract_run <- function(
 llm_comp_resolve_run <- function(
   conn,
   review_ids,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   max_attempts = 2,
   verbose = FALSE
 ) {
@@ -227,8 +227,8 @@ llm_comp_resolve_run <- function(
 #'
 #' @param conn DB connection
 #' @param review_ids Integer vector of review_assignment IDs to process
-#' @param model Azure deployment name. Default = "gpt-5.1"
-#' @param endpoint Azure endpoint base URL
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Process even if not at statusCode 5. Default = FALSE
 #'
@@ -241,8 +241,8 @@ llm_comp_resolve_run <- function(
 llm_comp_reanchor_run <- function(
   conn,
   review_ids,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   verbose = FALSE,
   force = FALSE
 ) {
@@ -312,8 +312,8 @@ llm_comp_reanchor_run <- function(
 #'
 #' @param conn DB connection
 #' @param review_ids Integer vector of review_assignment IDs to process
-#' @param model Azure deployment name. Default = "gpt-5.1"
-#' @param endpoint Azure endpoint base URL
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Reprocess even if statusCode != 3. Default = FALSE
 #'
@@ -325,8 +325,8 @@ llm_comp_reanchor_run <- function(
 llm_comp_score_run <- function(
   conn,
   review_ids,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   verbose = FALSE,
   force = FALSE
 ) {
@@ -398,9 +398,9 @@ llm_comp_score_run <- function(
 #'
 #' @param conn DB connection
 #' @param review_ids Integer vector of review_assignment IDs to process
-#' @param model Azure batch deployment name. Default = "gpt-5.1-batch"
-#' @param endpoint Azure endpoint base URL
-#' @param api_key API key. Default = HMS_AZURE_API env var
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
+#' @param api_key API key. Default = HUIT_API_NARRATE env var
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Resubmit even if already in-progress or completed. Default = FALSE
 #'
@@ -409,9 +409,9 @@ llm_comp_score_run <- function(
 llm_comp_extract_batch_submit <- function(
   conn,
   review_ids,
-  model = "gpt-5.1-batch",
-  endpoint = "https://azure-ai.hms.edu",
-  api_key = Sys.getenv("HMS_AZURE_API"),
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
+  api_key = Sys.getenv("HUIT_API_NARRATE"),
   verbose = FALSE,
   force = FALSE
 ) {
@@ -443,9 +443,9 @@ llm_comp_extract_batch_submit <- function(
 #'
 #' @param conn DB connection
 #' @param review_ids Integer vector of review_assignment IDs to process
-#' @param model Azure batch deployment name. Default = "gpt-5.1-batch"
-#' @param endpoint Azure endpoint base URL
-#' @param api_key API key. Default = HMS_AZURE_API env var
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
+#' @param api_key API key. Default = HUIT_API_NARRATE env var
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Resubmit even if already scored. Default = FALSE
 #'
@@ -454,9 +454,9 @@ llm_comp_extract_batch_submit <- function(
 llm_comp_score_batch_submit <- function(
   conn,
   review_ids,
-  model = "gpt-5.1-batch",
-  endpoint = "https://azure-ai.hms.edu",
-  api_key = Sys.getenv("HMS_AZURE_API"),
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
+  api_key = Sys.getenv("HUIT_API_NARRATE"),
   verbose = FALSE,
   force = FALSE
 ) {
@@ -504,9 +504,9 @@ llm_comp_score_batch_submit <- function(
 #'
 #' @param conn DB connection
 #' @param review_ids Integer vector of review_assignment IDs to process
-#' @param model Azure batch deployment name. Default = "gpt-5.1-batch"
-#' @param endpoint Azure endpoint base URL
-#' @param api_key API key. Default = HMS_AZURE_API env var
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
+#' @param api_key API key. Default = HUIT_API_NARRATE env var
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Resubmit even if not at statusCode 6. Default = FALSE
 #'
@@ -515,9 +515,9 @@ llm_comp_score_batch_submit <- function(
 llm_comp_resolve_batch_submit <- function(
   conn,
   review_ids,
-  model = "gpt-5.1-batch",
-  endpoint = "https://azure-ai.hms.edu",
-  api_key = Sys.getenv("HMS_AZURE_API"),
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
+  api_key = Sys.getenv("HUIT_API_NARRATE"),
   verbose = FALSE,
   force = FALSE
 ) {
@@ -568,9 +568,9 @@ llm_comp_resolve_batch_submit <- function(
 #'
 #' @param conn DB connection
 #' @param review_ids Integer vector of review_assignment IDs to process
-#' @param model Azure batch deployment name. Default = "gpt-5.1-batch"
-#' @param endpoint Azure endpoint base URL
-#' @param api_key API key. Default = HMS_AZURE_API env var
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param endpoint Gateway base URL. Default = llm_default_endpoint
+#' @param api_key API key. Default = HUIT_API_NARRATE env var
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Submit even if not at statusCode 5. Default = FALSE
 #'
@@ -579,9 +579,9 @@ llm_comp_resolve_batch_submit <- function(
 llm_comp_reanchor_batch_submit <- function(
   conn,
   review_ids,
-  model = "gpt-5.1-batch",
-  endpoint = "https://azure-ai.hms.edu",
-  api_key = Sys.getenv("HMS_AZURE_API"),
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
+  api_key = Sys.getenv("HUIT_API_NARRATE"),
   verbose = FALSE,
   force = FALSE
 ) {

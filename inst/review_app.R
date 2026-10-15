@@ -20,7 +20,7 @@ if (!file.exists(dbInfo)) {
   # These are the libraries that the app needs when deployed
 } else {
   devtools::load_all()
-  Sys.setenv(HMS_AZURE_API = keyring::key_get("HMS_AZURE_API"))
+  Sys.setenv(HUIT_API_NARRATE = keyring::key_get("HUIT_API_NARRATE"))
 }
 
 tabStatusIcon <- function(name, status, session) {

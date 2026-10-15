@@ -7,8 +7,8 @@
 llm_comp_reanchor(
   reanchor_text,
   prompt,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   debug = FALSE
 )
 }
@@ -17,9 +17,9 @@ llm_comp_reanchor(
 
 \item{prompt}{System prompt (inst/prompt_comp_reanchor.md contents)}
 
-\item{model}{Azure deployment name. Default = "gpt-5.1"}
+\item{model}{OpenAI model name. Default = llm_default_model}
 
-\item{endpoint}{Azure endpoint base URL}
+\item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
 
 \item{debug}{Return raw model output text as well. Default = FALSE}
 }
@@ -35,7 +35,7 @@ anchor being a string or NULL), NULL otherwise
 }
 }
 \description{
-Calls the Azure responses API asking, for each non-verbatim quote, for the
+Calls the OpenAI responses API asking, for each non-verbatim quote, for the
 exact span of the evaluation it refers to (or \code{null}). Parses the JSON
 output into an anchors list. Shared by the live and batch re-anchor
 workflows, mirroring llm_comp_resolve()'s structure.

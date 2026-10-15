@@ -7,8 +7,8 @@
 llm_comp_resolve(
   conflicts_text,
   prompt,
-  model = "gpt-5.1",
-  endpoint = "https://azure-ai.hms.edu",
+  model = llm_default_model,
+  endpoint = llm_default_endpoint,
   debug = FALSE
 )
 }
@@ -17,9 +17,9 @@ llm_comp_resolve(
 
 \item{prompt}{System prompt (resolve instructions, from prompt_generate_resolve())}
 
-\item{model}{Azure deployment name. Default = "gpt-5.1"}
+\item{model}{OpenAI model name. Default = llm_default_model}
 
-\item{endpoint}{Azure endpoint base URL}
+\item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
 
 \item{debug}{Return raw model output text as well. Default = FALSE}
 }
@@ -33,7 +33,7 @@ List with:
 }
 }
 \description{
-Calls the Azure responses API and parses the JSON output into a
+Calls the OpenAI responses API and parses the JSON output into a
 resolutions list. Shared by the live and (future) batch resolve
 workflows, mirroring llm_comp_extract()'s structure.
 }
