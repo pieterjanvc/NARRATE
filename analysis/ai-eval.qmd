@@ -13,13 +13,14 @@ library(glue)
 library(sqlife)
 library(dplyr)
 library(htmltools)
+library(ggplot2)
 pkgload::load_all(here::here(), quiet = TRUE)
 ```
 
 ## Data Info
 Number of **formative** reviews per reviewer 
 ```{r}
-db <- ifelse(interactive(), "local/narrate.db",  "../local/narrate.db")
+db <- ifelse(interactive(), "local/narrate.db", "../local/narrate.db")
 
 rubric_version <- 5
 last_modified <- format(file.info(db)$mtime, "%B %-d, %Y")
@@ -42,9 +43,13 @@ review_info <- tbl(conn, "review_assignment") |>
   ) |>
   collect()
 
-reviews_by_user <- review_info |> group_by(reviewer_id, username) |> summarise(n = n(), .groups = "drop")
+reviews_by_user <- review_info |>
+  group_by(reviewer_id, username) |>
+  summarise(n = n(), .groups = "drop")
 reviews_by_user |> kable()
-HTML(glue("Data last modified {last_modified} - rubric version {rubric_version}"))
+HTML(glue(
+  "Data last modified {last_modified} - rubric version {rubric_version}"
+))
 ```
 
 ## Table 1: AI – Human Concordance (n = subset of formative evaluations we all coded)
@@ -59,7 +64,12 @@ shared_evals <- review_info |>
 
 shared_reviews <- review_info |>
   filter(evaluation_id %in% shared_evals) |>
-  select(review_id = id, evaluation_id, human, sentiment = sentiment_score_value)
+  select(
+    review_id = id,
+    evaluation_id,
+    human,
+    sentiment = sentiment_score_value
+  )
 
 # Quality score on a 0-100 scale (sum of weighted, normalized components)
 scores <- shared_reviews |>
@@ -184,7 +194,534 @@ comp_detection |>
       "SD Specificity (when detected)"
     )
   )
-HTML(glue("n = {length(ai_review_ids)} formative evaluations reviewed by {ai_model}"))
+HTML(glue(
+  "n = {length(ai_review_ids)} formative evaluations reviewed by {ai_model}"
+))
+```
+
+# Human competency detection across reviews
+
+```{r}
+# Create a table with stats of AI review (GPT 6 luna)
+# - Competency: title
+# - detected_perc: percentage of AI completed reviews that mention this competency
+# - spec_avg: the average specificity if the competency was detected
+# - spec_sd: standard deviation
+ai_model <- "gpt-6-luna"
+
+ai_review_ids <- review_info |>
+  filter(human == 1) |>
+  pull(id)
+
+# All competencies on the rubric, so undetected ones still show up (0%)
+rubric_comps <- tbl(conn, "rubric_competency") |>
+  filter(rubric_id == rubric_version) |>
+  left_join(
+    tbl(conn, "competency") |> select(competency_id = id, cID, name),
+    by = "competency_id"
+  ) |>
+  select(competency_id, order, name) |>
+  collect()
+
+ai_comp_scores <- tbl(conn, "competency_score") |>
+  filter(review_assignment_id %in% local(ai_review_ids), !is.na(specificity)) |>
+  select(review_assignment_id, competency_id, specificity) |>
+  collect()
+
+comp_detection <- rubric_comps |>
+  left_join(ai_comp_scores, by = "competency_id") |>
+  group_by(order, Competency = name) |>
+  summarise(
+    n_detected = n_distinct(review_assignment_id, na.rm = TRUE),
+    spec_avg = mean(specificity, na.rm = TRUE),
+    spec_sd = sd(specificity, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    detected_perc = 100 * n_detected / length(ai_review_ids),
+    spec_avg = ifelse(n_detected == 0, NA, spec_avg)
+  ) |>
+  arrange(order) |>
+  select(Competency, detected_perc, spec_avg, spec_sd)
+
+comp_detection |>
+  kable(
+    digits = 1,
+    col.names = c(
+      "Competency",
+      "% of Human Reviews Detecting Competency",
+      "Mean Specificity (when detected)",
+      "SD Specificity (when detected)"
+    )
+  )
+HTML(glue(
+  "n = {length(ai_review_ids)} formative evaluations reviewed by {ai_model}"
+))
+```
+
+
+# Does the AI agree with humans as well as humans agree with each other?
+Intraclass Correlation Coefficient (ICC)
+
+Is the AI at least as good a rater as the average human? Non-inferiority test
+on Δ = (mean AI–human pairwise ICC) − (mean human–human pairwise ICC). Each
+pairwise ICC is ICC(2,1): two-way random effects, absolute agreement, single
+rater, computed on the evaluations all raters coded. Absolute agreement means a
+systematic shift in the AI's scores lowers its ICC, so bias is penalised too.
+
+- **Margin (pre-specified): 0.10.** On the Koo & Li (2016) reliability bands
+  (< 0.50 poor, 0.50–0.75 moderate, 0.75–0.90 good, > 0.90 excellent) each band
+  is 0.15–0.25 wide, so a drop of less than 0.10 can't move the AI down a full
+  band from where the humans sit.
+- **CI:** 90% percentile bootstrap over evaluations. Both terms of Δ are
+  recomputed on the same resample, so the CI accounts for their correlation.
+  A two-sided 90% CI matches a one-sided test at α = 0.05.
+- **Primary test, non-inferiority** (H₀: Δ ≤ −0.10): the AI is non-inferior if
+  the lower bound of the CI is above −0.10. If the upper bound is below −0.10,
+  the AI is inferior; anything else is inconclusive.
+- **Secondary test, superiority** (H₀: Δ ≤ 0): only tested if non-inferiority
+  holds. The AI is superior if the lower bound of the CI is above 0, i.e. it
+  agrees with humans better than humans agree with each other. Testing in this
+  fixed order keeps the overall α at 0.05 without a multiplicity correction.
+- **p-values:** one-sided bootstrap p-values, the share of resamples at or
+  below the null boundary, computed as (k + 1) / (B + 1) so they are never 0.
+  They agree with the CI: p < 0.05 exactly when the lower bound clears the
+  boundary. Note that the non-inferiority p-value tests against −0.10, not 0;
+  a small value means the AI is *not* meaningfully worse.
+
+```{r}
+ni_margin <- 0.10
+n_boot <- 2000
+set.seed(20261027)
+
+ai_ids <- unique(review_info$reviewer_id[review_info$human == 0])
+human_ids <- unique(review_info$reviewer_id[review_info$human == 1])
+rater_pairs <- combn(c(ai_ids, human_ids), 2, simplify = FALSE)
+pair_type <- sapply(rater_pairs, function(p) {
+  ifelse(any(p %in% ai_ids), "ai_human", "human_human")
+})
+pair_label <- sapply(rater_pairs, function(p) {
+  paste(
+    reviews_by_user$username[match(p, reviews_by_user$reviewer_id)],
+    collapse = " – "
+  )
+})
+
+# One row per evaluation, one column per rater
+rater_matrix <- function(var) {
+  scores |>
+    left_join(
+      review_info |> select(review_id = id, reviewer_id),
+      by = "review_id"
+    ) |>
+    select(evaluation_id, reviewer_id, value = {{ var }}) |>
+    tidyr::pivot_wider(names_from = reviewer_id, values_from = value) |>
+    select(-evaluation_id) |>
+    as.matrix()
+}
+
+pairwise_icc <- function(m) {
+  sapply(rater_pairs, function(p) {
+    irr::icc(
+      m[, as.character(p)],
+      model = "twoway",
+      type = "agreement",
+      unit = "single"
+    )$value
+  })
+}
+
+icc_delta <- function(iccs) {
+  mean(iccs[pair_type == "ai_human"]) - mean(iccs[pair_type == "human_human"])
+}
+
+# One-sided bootstrap p-value for H0: delta <= boundary
+boot_p <- function(boot_delta, boundary) {
+  (sum(boot_delta <= boundary) + 1) / (length(boot_delta) + 1)
+}
+
+format_p <- function(p) ifelse(p < 0.001, "< 0.001", sprintf("%.3f", p))
+
+# Non-inferiority then superiority from bootstrap draws of delta (negative =
+# AI worse). Returns raw stats plus formatted table columns.
+ni_test <- function(boot_delta, margin, digits = 3) {
+  boot_delta <- boot_delta[!is.na(boot_delta)]
+  delta_ci <- unname(quantile(boot_delta, c(0.05, 0.95)))
+  p_ni <- boot_p(boot_delta, -margin)
+  p_sup <- boot_p(boot_delta, 0)
+  ci_fmt <- glue("[%.{digits}f, %.{digits}f]")
+  list(
+    stats = list(delta_ci = delta_ci, p_ni = p_ni, p_sup = p_sup),
+    columns = tibble(
+      ci = sprintf(ci_fmt, delta_ci[1], delta_ci[2]),
+      p_ni = format_p(p_ni),
+      # Superiority is only tested once non-inferiority holds
+      p_sup = ifelse(p_ni < 0.05, format_p(p_sup), "–"),
+      conclusion = case_when(
+        p_ni < 0.05 & p_sup < 0.05 ~ "Non-inferior and superior",
+        p_ni < 0.05 ~ "Non-inferior",
+        delta_ci[2] < -margin ~ "Inferior",
+        TRUE ~ "Inconclusive"
+      )
+    )
+  )
+}
+
+non_inferiority <- function(var, label) {
+  m <- rater_matrix({{ var }})
+  iccs <- pairwise_icc(m)
+  boot_delta <- replicate(n_boot, {
+    icc_delta(pairwise_icc(m[sample(nrow(m), replace = TRUE), ]))
+  })
+  test <- ni_test(boot_delta, ni_margin)
+  list(
+    summary = tibble(
+      Measure = label,
+      icc_ai_human = mean(iccs[pair_type == "ai_human"]),
+      icc_human_human = mean(iccs[pair_type == "human_human"]),
+      delta = icc_delta(iccs)
+    ) |>
+      bind_cols(test$columns),
+    pairs = tibble(Measure = label, Pair = pair_label, ICC = iccs),
+    # Unformatted values for the results text
+    stats = test$stats
+  )
+}
+
+ni_results <- list(
+  non_inferiority(quality, "Quality Score"),
+  non_inferiority(sentiment, "Sentiment Score")
+)
+
+bind_rows(lapply(ni_results, `[[`, "summary")) |>
+  kable(
+    digits = 3,
+    col.names = c(
+      "",
+      "Mean AI–Human ICC",
+      "Mean Human–Human ICC",
+      "Δ (AI–Human − Human–Human)",
+      "90% Bootstrap CI for Δ",
+      glue("p Non-inferiority (H₀: Δ ≤ −{ni_margin})"),
+      "p Superiority (H₀: Δ ≤ 0)",
+      glue("Conclusion (margin = {ni_margin})")
+    )
+  )
+HTML(glue(
+  "n = {length(shared_evals)} evaluations, {n_boot} bootstrap resamples; ",
+  "{sum(pair_type == 'ai_human')} AI–human and ",
+  "{sum(pair_type == 'human_human')} human–human rater pairs"
+))
+```
+
+```{r}
+#| results: asis
+# Results sentence for the quality score, ready to copy into the paper
+p_text <- function(p) {
+  ifelse(p < 0.001, "p < 0.001", sprintf("p = %.3f", p))
+}
+
+quality_ni <- ni_results[[1]]
+q_sum <- quality_ni$summary
+q_stats <- quality_ni$stats
+
+ni_sentence <- if (q_stats$p_ni < 0.05) {
+  glue(
+    "The AI was non-inferior at the pre-specified margin of {ni_margin} ",
+    "({p_text(q_stats$p_ni)})"
+  )
+} else {
+  glue(
+    "Non-inferiority at the pre-specified margin of {ni_margin} was not ",
+    "shown ({p_text(q_stats$p_ni)})"
+  )
+}
+sup_sentence <- if (q_stats$p_ni >= 0.05) {
+  ""
+} else if (q_stats$p_sup < 0.05) {
+  glue(", and superior to human–human agreement ({p_text(q_stats$p_sup)}).")
+} else {
+  glue(", but not shown to be superior ({p_text(q_stats$p_sup)}).")
+}
+if (sup_sentence == "") {
+  ni_sentence <- paste0(ni_sentence, ".")
+}
+
+cat(glue(
+  "\n\n> Agreement on Quality between the AI and human raters was comparable to ",
+  "agreement among humans (mean ICC {sprintf('%.2f', q_sum$icc_ai_human)} vs ",
+  "{sprintf('%.2f', q_sum$icc_human_human)}; ",
+  "Δ = {sprintf('%.3f', q_sum$delta)}, 90% CI ",
+  "{sprintf('%.3f', q_stats$delta_ci[1])} to ",
+  "{sprintf('%.3f', q_stats$delta_ci[2])}). ",
+  "{ni_sentence}{sup_sentence}\n\n"
+))
+```
+
+Pairwise ICCs
+
+```{r}
+bind_rows(lapply(ni_results, `[[`, "pairs")) |>
+  tidyr::pivot_wider(names_from = Measure, values_from = ICC) |>
+  kable(digits = 3)
+```
+
+# Does the AI agree with humans across quality levels?
+Disagreement in score points (Quality Score only)
+
+ICC can't be compared within subgroups: restricting to similar-quality texts
+shrinks the between-text variance, so every ICC drops regardless of how well
+raters agree. Instead, per evaluation we measure disagreement on the 0–100
+quality scale:
+
+- **AI disagreement** = mean |AI − human| over the human raters.
+- **Human disagreement** = mean |human − human| over the human–human pairs.
+- **Δ (points)** = human disagreement − AI disagreement, so like the ICC Δ,
+  negative means the AI agrees less well than humans do with each other.
+
+Quality level is the **human-only** mean quality score of the evaluation, so
+the AI's own score doesn't decide which group a text falls in.
+
+- **Margin: a small effect, 0.2 × between-evaluation SD.** The SD of the
+  human-mean quality score across evaluations is how much reviews genuinely
+  differ in quality, i.e. what the score is meant to detect. Following Cohen's
+  convention for a small effect (d = 0.2), the AI's disagreement may exceed
+  human disagreement by no more than 0.2 of that SD, on average. The margin was
+  set after the ICC analysis, so the table also gives the **smallest passing
+  margin** (minus the lower CI bound): the AI is non-inferior for any margin
+  above it, so readers can apply their own.
+- **Tests:** the same non-inferiority then superiority procedure, 90% bootstrap
+  CIs and one-sided p-values as for the ICC, overall and within tertiles of
+  quality.
+- **Trend:** the slope of Δ on quality level (per 10 points). A slope near 0
+  means the AI's relative performance doesn't change with quality.
+- **Caveats:** near the ends of the scale both disagreements are compressed
+  (floor/ceiling), and quality level and human disagreement share the same
+  human scores, which slightly biases the slope.
+
+```{r}
+set.seed(20261027)
+
+quality_m <- rater_matrix(quality)
+ai_col <- as.character(ai_ids)
+human_cols <- as.character(human_ids)
+human_pairs <- combn(human_cols, 2, simplify = FALSE)
+
+tertile_labels <- c("Low", "Middle", "High")
+disagreement <- tibble(
+  human_mean = rowMeans(quality_m[, human_cols]),
+  d_ai = rowMeans(abs(quality_m[, ai_col] - quality_m[, human_cols])),
+  d_hh = rowMeans(sapply(human_pairs, function(p) {
+    abs(quality_m[, p[1]] - quality_m[, p[2]])
+  }))
+) |>
+  mutate(
+    delta_pts = d_hh - d_ai,
+    tertile = ntile(human_mean, 3)
+  )
+
+# Margin = small effect (Cohen's d = 0.2) relative to how much evaluations
+# differ in quality; fixed on the full data, not re-estimated per resample
+margin_effect_size <- 0.2
+quality_sd <- sd(disagreement$human_mean)
+pts_margin <- margin_effect_size * quality_sd
+
+# Each resample: overall delta, slope per 10 points, and delta per tertile
+pts_boot <- replicate(n_boot, {
+  b <- disagreement[sample(nrow(disagreement), replace = TRUE), ]
+  c(
+    overall = mean(b$delta_pts),
+    slope = 10 * coef(lm(delta_pts ~ human_mean, data = b))[["human_mean"]],
+    sapply(1:3, function(t) mean(b$delta_pts[b$tertile == t]))
+  )
+})
+
+points_row <- function(df, boot_delta, label) {
+  test <- ni_test(boot_delta, pts_margin, digits = 1)
+  list(
+    row = tibble(
+      Group = label,
+      n = nrow(df),
+      quality_range = sprintf(
+        "%.0f–%.0f",
+        min(df$human_mean),
+        max(df$human_mean)
+      ),
+      d_ai = mean(df$d_ai),
+      d_hh = mean(df$d_hh),
+      delta = mean(df$delta_pts)
+    ) |>
+      bind_cols(test$columns) |>
+      # Non-inferior for any margin above minus the lower CI bound
+      mutate(min_margin = max(0, -test$stats$delta_ci[1]), .after = ci),
+    # Unformatted values for the results text
+    stats = test$stats
+  )
+}
+
+# Overall first, then one entry per tertile
+pts_results <- c(
+  list(points_row(disagreement, pts_boot["overall", ], "All evaluations")),
+  lapply(1:3, function(t) {
+    points_row(
+      disagreement |> filter(tertile == t),
+      pts_boot[2 + t, ],
+      glue("&nbsp;&nbsp;&nbsp;{tertile_labels[t]} quality")
+    )
+  })
+)
+
+bind_rows(lapply(pts_results, `[[`, "row")) |>
+  kable(
+    digits = 1,
+    escape = FALSE,
+    col.names = c(
+      "",
+      "n",
+      "Quality Range (human mean)",
+      "AI Disagreement (points)",
+      "Human Disagreement (points)",
+      "Δ (Human − AI Disagreement)",
+      "90% Bootstrap CI for Δ",
+      "Smallest Passing Margin (points)",
+      glue("p Non-inferiority (H₀: Δ ≤ −{sprintf('%.1f', pts_margin)})"),
+      "p Superiority (H₀: Δ ≤ 0)",
+      glue("Conclusion (margin = {sprintf('%.1f', pts_margin)} points)")
+    )
+  )
+
+slope_est <- 10 *
+  coef(lm(delta_pts ~ human_mean, data = disagreement))[[
+    "human_mean"
+  ]]
+slope_ci <- quantile(pts_boot["slope", ], c(0.05, 0.95))
+HTML(glue(
+  "Margin = {margin_effect_size} × {sprintf('%.1f', quality_sd)} ",
+  "(SD of human-mean quality across evaluations) = ",
+  "{sprintf('%.1f', pts_margin)} points; ",
+  "{n_boot} bootstrap resamples. ",
+  "Slope of Δ on quality level: {sprintf('%.2f', slope_est)} points per 10 ",
+  "quality points (90% CI {sprintf('%.2f', slope_ci[1])} to ",
+  "{sprintf('%.2f', slope_ci[2])})"
+))
+```
+
+```{r}
+#| results: asis
+# Results sentence for disagreement across quality levels, ready to copy into
+# the paper (p_text() is defined with the ICC results sentence)
+pts_overall <- pts_results[[1]]
+pts_tertiles <- pts_results[-1]
+tertile_p_ni <- sapply(pts_tertiles, function(r) r$stats$p_ni)
+tertile_ni <- tertile_p_ni < 0.05
+tertile_p <- glue("{tolower(tertile_labels)}, {p_text(tertile_p_ni)}")
+
+overall_sentence <- glue(
+  "Using a non-inferiority margin of {sprintf('%.1f', pts_margin)} points ",
+  "({margin_effect_size} × the between-evaluation SD of ",
+  "{sprintf('%.1f', quality_sd)}), the AI was ",
+  "{ifelse(pts_overall$stats$p_ni < 0.05, '', 'not shown to be ')}",
+  "non-inferior overall ({p_text(pts_overall$stats$p_ni)})"
+)
+tertile_sentence <- if (all(tertile_ni)) {
+  glue(
+    " and within each tertile of quality ",
+    "({paste(tertile_p, collapse = '; ')})."
+  )
+} else {
+  glue(
+    ". Within tertiles of quality, non-inferiority was shown for ",
+    "{if (any(tertile_ni)) paste(tertile_p[tertile_ni], collapse = '; ') else 'none'}",
+    " but not for ",
+    "{paste(tertile_p[!tertile_ni], collapse = '; ')}."
+  )
+}
+slope_sentence <- if (slope_ci[1] < 0 && slope_ci[2] > 0) {
+  "did not change with"
+} else {
+  "changed with"
+}
+
+cat(glue(
+  "\n\n> Across quality levels, the AI's disagreement with human raters was ",
+  "comparable to the disagreement among humans (mean absolute difference ",
+  "{sprintf('%.1f', pts_overall$row$d_ai)} vs ",
+  "{sprintf('%.1f', pts_overall$row$d_hh)} points on the 0–100 quality score; ",
+  "Δ (human − AI disagreement) = {sprintf('%.1f', pts_overall$row$delta)}, ",
+  "90% CI {sprintf('%.1f', pts_overall$stats$delta_ci[1])} to ",
+  "{sprintf('%.1f', pts_overall$stats$delta_ci[2])}). ",
+  "{overall_sentence}{tertile_sentence} ",
+  "The difference {slope_sentence} quality level (slope ",
+  "{sprintf('%.2f', slope_est)} points per 10 quality points, 90% CI ",
+  "{sprintf('%.2f', slope_ci[1])} to {sprintf('%.2f', slope_ci[2])}).\n\n"
+))
+```
+
+```{r}
+#| fig-width: 7
+#| fig-height: 4
+#| fig-cap: "Per-evaluation disagreement by quality level, with linear fits."
+
+rater_colors <- c("AI vs human" = "#2a78d6", "Human vs human" = "#eb6834")
+
+disagreement |>
+  tidyr::pivot_longer(
+    c(d_ai, d_hh),
+    names_to = "comparison",
+    values_to = "points"
+  ) |>
+  mutate(
+    comparison = ifelse(comparison == "d_ai", "AI vs human", "Human vs human")
+  ) |>
+  ggplot(aes(human_mean, points, color = comparison, shape = comparison)) +
+  geom_point(size = 2.2, alpha = 0.7) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, linewidth = 0.8) +
+  scale_color_manual(values = rater_colors) +
+  scale_shape_manual(values = c(16, 17)) +
+  labs(
+    x = "Quality score (mean of human raters)",
+    y = "Mean absolute disagreement (points)",
+    color = NULL,
+    shape = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", panel.grid.minor = element_blank())
+```
+
+```{r}
+#| fig-width: 7
+#| fig-height: 4
+#| fig-cap: "Δ (human − AI disagreement) by quality level, with linear fit and 90% confidence band. The dashed line is the non-inferiority margin (0.2 × between-evaluation SD); it applies to the average, i.e. the fitted line and band, not to individual evaluations."
+disagreement |>
+  ggplot(aes(human_mean, delta_pts)) +
+  geom_hline(yintercept = 0, color = "grey40") +
+  geom_hline(yintercept = -pts_margin, color = "grey40", linetype = "dashed") +
+  annotate(
+    "text",
+    x = max(disagreement$human_mean),
+    y = -pts_margin,
+    label = glue("Margin (−{sprintf('%.1f', pts_margin)})"),
+    hjust = 1,
+    vjust = 1.5,
+    size = 3.5,
+    color = "grey30"
+  ) +
+  geom_point(size = 2.2, alpha = 0.7, color = rater_colors[["AI vs human"]]) +
+  geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    level = 0.90,
+    color = rater_colors[["AI vs human"]],
+    fill = rater_colors[["AI vs human"]],
+    alpha = 0.15,
+    linewidth = 0.8
+  ) +
+  labs(
+    x = "Quality score (mean of human raters)",
+    y = "Δ (human − AI disagreement, points)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
 ```
 
 ```{r}
