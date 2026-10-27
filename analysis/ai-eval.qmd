@@ -52,7 +52,7 @@ HTML(glue(
 ))
 ```
 
-## Table 1: AI – Human Concordance (n = subset of formative evaluations we all coded)
+## AI – Human Concordance (n = subset of formative evaluations we all coded)
 ```{r}
 # Evaluations reviewed by every reviewer (AI + all humans)
 n_reviewers <- n_distinct(review_info$reviewer_id)
@@ -139,123 +139,131 @@ HTML(glue(
 ))
 ```
 
-# AI competency detection across reviews
+# AI – Human competency detection
+
+For each competency, how often it was detected in the shared evaluations, and by
+whom. Percentages are out of all shared evaluations ("H" = number of humans
+that detected the competency in an evaluation).
+
+**Summary**: each cell is *% of evaluations – mean specificity ± SD*.
+Specificity is taken from the raters noted below, in the evaluations that
+match the column.
+
+- **Any**: at least one rater (AI or human) detected it. Specificity: all
+  raters who detected it.
+- **All**: the AI and every human detected it. Specificity: all raters.
+- **AI**: the AI detected it, regardless of humans. Specificity: AI.
+- **Human**: 2+ humans detected it, regardless of the AI. Specificity: humans
+  who detected it.
+- **AI + Human**: the AI and at least one human detected it. Specificity: all
+  raters who detected it.
+- **AI only**: the AI detected it, no human did. Specificity: AI.
+- **Human only**: every human detected it, the AI did not. Specificity: humans.
 
 ```{r}
-# Create a table with stats of AI review (GPT 6 luna)
-# - Competency: title
-# - detected_perc: percentage of AI completed reviews that mention this competency
-# - spec_avg: the average specificity if the competency was detected
-# - spec_sd: standard deviation
-ai_model <- "gpt-6-luna"
-
-ai_review_ids <- review_info |>
-  filter(human == 0, username == ai_model) |>
-  pull(id)
+n_humans <- n_distinct(review_info$reviewer_id[review_info$human == 1])
+n_evals <- length(shared_evals)
 
 # All competencies on the rubric, so undetected ones still show up (0%)
 rubric_comps <- tbl(conn, "rubric_competency") |>
   filter(rubric_id == rubric_version) |>
   left_join(
-    tbl(conn, "competency") |> select(competency_id = id, cID, name),
+    tbl(conn, "competency") |> select(competency_id = id, name),
     by = "competency_id"
   ) |>
   select(competency_id, order, name) |>
-  collect()
+  collect() |>
+  arrange(order)
 
-ai_comp_scores <- tbl(conn, "competency_score") |>
-  filter(review_assignment_id %in% local(ai_review_ids), !is.na(specificity)) |>
-  select(review_assignment_id, competency_id, specificity) |>
-  collect()
-
-comp_detection <- rubric_comps |>
-  left_join(ai_comp_scores, by = "competency_id") |>
-  group_by(order, Competency = name) |>
-  summarise(
-    n_detected = n_distinct(review_assignment_id, na.rm = TRUE),
-    spec_avg = mean(specificity, na.rm = TRUE),
-    spec_sd = sd(specificity, na.rm = TRUE),
-    .groups = "drop"
+# One row per detected competency in a shared review
+detections <- tbl(conn, "competency_score") |>
+  filter(
+    review_assignment_id %in% local(shared_reviews$review_id),
+    !is.na(specificity)
   ) |>
-  mutate(
-    detected_perc = 100 * n_detected / length(ai_review_ids),
-    spec_avg = ifelse(n_detected == 0, NA, spec_avg)
-  ) |>
-  arrange(order) |>
-  select(Competency, detected_perc, spec_avg, spec_sd)
-
-comp_detection |>
-  kable(
-    digits = 1,
-    col.names = c(
-      "Competency",
-      "% of AI Reviews Detecting Competency",
-      "Mean Specificity (when detected)",
-      "SD Specificity (when detected)"
-    )
+  select(review_id = review_assignment_id, competency_id, specificity) |>
+  collect() |>
+  left_join(
+    shared_reviews |> select(review_id, evaluation_id, human),
+    by = "review_id"
   )
+
+# Detection pattern per evaluation and competency: did the AI detect it and
+# how many humans did
+patterns <- detections |>
+  group_by(evaluation_id, competency_id) |>
+  summarise(
+    ai = any(human == 0),
+    n_human = n_distinct(review_id[human == 1]),
+    .groups = "drop"
+  )
+
+# One cell per competency for evaluations matching `pattern`. Specificity is
+# taken from `raters` ("all", "ai" or "human") in those evaluations
+detection_cells <- function(pattern, raters = "all", with_spec = TRUE) {
+  matched <- patterns |> filter(!!pattern)
+  sapply(rubric_comps$competency_id, function(comp) {
+    comp_matched <- matched |> filter(competency_id == comp)
+    perc <- sprintf("%.0f%%", 100 * nrow(comp_matched) / n_evals)
+    spec <- detections |>
+      semi_join(comp_matched, by = c("evaluation_id", "competency_id")) |>
+      filter(raters == "all" | human == (raters == "human")) |>
+      pull(specificity)
+    if (!with_spec || length(spec) == 0) {
+      return(perc)
+    }
+    spec_sd <- if (length(spec) > 1) sprintf(" ± %.1f", sd(spec)) else ""
+    glue("{perc} – {sprintf('%.1f', mean(spec))}{spec_sd}")
+  })
+}
+
+summary_cols <- list(
+  "Any" = list(rlang::expr(TRUE), "all"),
+  "All" = list(rlang::expr(ai & n_human == n_humans), "all"),
+  "AI" = list(rlang::expr(ai), "ai"),
+  "Human" = list(rlang::expr(n_human >= 2), "human"),
+  "AI + Human" = list(rlang::expr(ai & n_human >= 1), "all"),
+  "AI only" = list(rlang::expr(ai & n_human == 0), "ai"),
+  "Human only" = list(rlang::expr(!ai & n_human == n_humans), "human")
+)
+
+tibble(
+  Competency = rubric_comps$name,
+  !!!lapply(summary_cols, function(col) detection_cells(col[[1]], col[[2]]))
+) |>
+  kable()
 HTML(glue(
-  "n = {length(ai_review_ids)} formative evaluations reviewed by {ai_model}"
+  "n = {n_evals} formative evaluations reviewed by the AI and {n_humans} humans"
 ))
 ```
 
-# Human competency detection across reviews
+**Breakdown**: every detection pattern, split by whether the AI detected the
+competency and by how many humans did. Columns don't overlap, so each row sums
+to the *Any* column above.
+
+- **AI + *k*H**: the AI and exactly *k* humans detected it.
+- **AI only**: the AI detected it, no human did.
+- ***k*H only**: exactly *k* humans detected it, the AI did not.
 
 ```{r}
-# Create a table with stats of AI review (GPT 6 luna)
-# - Competency: title
-# - detected_perc: percentage of AI completed reviews that mention this competency
-# - spec_avg: the average specificity if the competency was detected
-# - spec_sd: standard deviation
-ai_model <- "gpt-6-luna"
-
-ai_review_ids <- review_info |>
-  filter(human == 1) |>
-  pull(id)
-
-# All competencies on the rubric, so undetected ones still show up (0%)
-rubric_comps <- tbl(conn, "rubric_competency") |>
-  filter(rubric_id == rubric_version) |>
-  left_join(
-    tbl(conn, "competency") |> select(competency_id = id, cID, name),
-    by = "competency_id"
-  ) |>
-  select(competency_id, order, name) |>
-  collect()
-
-ai_comp_scores <- tbl(conn, "competency_score") |>
-  filter(review_assignment_id %in% local(ai_review_ids), !is.na(specificity)) |>
-  select(review_assignment_id, competency_id, specificity) |>
-  collect()
-
-comp_detection <- rubric_comps |>
-  left_join(ai_comp_scores, by = "competency_id") |>
-  group_by(order, Competency = name) |>
-  summarise(
-    n_detected = n_distinct(review_assignment_id, na.rm = TRUE),
-    spec_avg = mean(specificity, na.rm = TRUE),
-    spec_sd = sd(specificity, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
-  mutate(
-    detected_perc = 100 * n_detected / length(ai_review_ids),
-    spec_avg = ifelse(n_detected == 0, NA, spec_avg)
-  ) |>
-  arrange(order) |>
-  select(Competency, detected_perc, spec_avg, spec_sd)
-
-comp_detection |>
-  kable(
-    digits = 1,
-    col.names = c(
-      "Competency",
-      "% of Human Reviews Detecting Competency",
-      "Mean Specificity (when detected)",
-      "SD Specificity (when detected)"
-    )
+breakdown_cols <- c(
+  setNames(
+    lapply(n_humans:0, function(k) rlang::expr(ai & n_human == !!k)),
+    c(glue("AI + {n_humans:1}H"), "AI only")
+  ),
+  setNames(
+    lapply(n_humans:1, function(k) rlang::expr(!ai & n_human == !!k)),
+    glue("{n_humans:1}H only")
   )
+)
+
+tibble(
+  Competency = rubric_comps$name,
+  !!!lapply(breakdown_cols, detection_cells, with_spec = FALSE)
+) |>
+  kable()
 HTML(glue(
-  "n = {length(ai_review_ids)} formative evaluations reviewed by {ai_model}"
+  "n = {n_evals} formative evaluations reviewed by the AI and {n_humans} humans"
 ))
 ```
 
@@ -290,6 +298,9 @@ systematic shift in the AI's scores lowers its ICC, so bias is penalised too.
   a small value means the AI is *not* meaningfully worse.
 
 ```{r}
+#| label: icc-bootstrap
+#| cache: true
+#| cache.extra: !expr file.mtime(db)
 ni_margin <- 0.10
 n_boot <- 2000
 set.seed(20261027)
@@ -500,6 +511,10 @@ the AI's own score doesn't decide which group a text falls in.
   human scores, which slightly biases the slope.
 
 ```{r}
+#| label: disagreement-bootstrap
+#| cache: true
+#| cache.extra: !expr file.mtime(db)
+#| dependson: icc-bootstrap
 set.seed(20261027)
 
 quality_m <- rater_matrix(quality)
