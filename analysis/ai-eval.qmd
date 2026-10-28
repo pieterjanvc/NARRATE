@@ -739,6 +739,170 @@ disagreement |>
   theme(panel.grid.minor = element_blank())
 ```
 
+# AI review of all evaluations
+
+All formative evaluations reviewed by the AI on this rubric, not just the shared
+subset.
+
+```{r}
+ai_reviews <- review_info |>
+  filter(human == 0) |>
+  select(review_id = id, evaluation_id, utility = utility_score_value)
+
+ai_scores <- review_scores(conn, ai_reviews$review_id) |>
+  transmute(review_id, quality = 100 * (coverage + avg_specificity + utility))
+
+# One row per detected competency in an AI review
+ai_detections <- tbl(conn, "competency_score") |>
+  filter(
+    review_assignment_id %in% local(ai_reviews$review_id),
+    !is.na(specificity)
+  ) |>
+  select(review_id = review_assignment_id, competency_id, specificity) |>
+  collect()
+
+# Length of the evaluation text the AI reviewed (answers only, no questions)
+eval_length <- tbl(conn, "answer") |>
+  filter(evaluation_id %in% local(ai_reviews$evaluation_id)) |>
+  select(evaluation_id, answer_txt_redacted) |>
+  collect() |>
+  group_by(evaluation_id) |>
+  summarise(
+    nchar = sum(nchar(coalesce(answer_txt_redacted, ""))),
+    .groups = "drop"
+  )
+
+# Per-review summary: competencies detected and their mean specificity (NA if
+# none were detected)
+ai_review_summary <- ai_reviews |>
+  left_join(ai_scores, by = "review_id") |>
+  left_join(
+    ai_detections |>
+      group_by(review_id) |>
+      summarise(
+        n_comp = n(),
+        avg_spec = mean(specificity),
+        .groups = "drop"
+      ),
+    by = "review_id"
+  ) |>
+  left_join(eval_length, by = "evaluation_id") |>
+  mutate(n_comp = coalesce(n_comp, 0L))
+
+n_ai_reviews <- nrow(ai_review_summary)
+mean_sd <- function(x, digits = 1) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) {
+    return("–")
+  }
+  fmt <- glue("%.{digits}f ± %.{digits}f")
+  sprintf(fmt, mean(x), sd(x))
+}
+```
+
+## Quality score
+
+```{r}
+#| fig-width: 7
+#| fig-height: 2.5
+#| fig-cap: "Distribution of the AI quality score across all formative evaluations."
+ai_review_summary |>
+  ggplot(aes(quality, y = "")) +
+  geom_jitter(width = 0, height = 0.2, size = 0.8, alpha = 0.15, color = "#2a78d6") +
+  geom_boxplot(width = 0.5, outlier.shape = NA, fill = NA, linewidth = 0.6) +
+  scale_x_continuous(limits = c(0, 100)) +
+  labs(x = "Quality score (0–100)", y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+
+```{r}
+q <- ai_review_summary$quality
+tibble(
+  n = length(q),
+  Mean = mean(q),
+  SD = sd(q),
+  Min = min(q),
+  Q1 = quantile(q, 0.25),
+  Median = median(q),
+  Q3 = quantile(q, 0.75),
+  Max = max(q)
+) |>
+  kable(digits = 1)
+```
+
+## Competency detection
+
+Detection rate is the % of AI reviews that detected the competency;
+specificity is over the reviews that detected it.
+
+```{r}
+rubric_comps |>
+  left_join(
+    ai_detections |>
+      group_by(competency_id) |>
+      summarise(
+        n = n(),
+        spec = mean_sd(specificity),
+        .groups = "drop"
+      ),
+    by = "competency_id"
+  ) |>
+  transmute(
+    Competency = name,
+    `Detection Rate` = sprintf("%.1f%%", 100 * coalesce(n, 0L) / n_ai_reviews),
+    `Specificity (mean ± SD)` = coalesce(spec, "–")
+  ) |>
+  kable()
+HTML(glue("n = {n_ai_reviews} formative evaluations reviewed by the AI"))
+```
+
+## Utility score
+
+Specificity is the per-review mean specificity, averaged over reviews that
+detected at least one competency. Length is the number of characters in the
+evaluation text (answers only).
+
+```{r}
+utility_levels <- tbl(conn, "rubric_utility") |>
+  filter(rubric_id == rubric_version) |>
+  left_join(
+    tbl(conn, "utility") |> select(utility_id = id, value, description),
+    by = "utility_id"
+  ) |>
+  select(utility = value, description) |>
+  collect() |>
+  # Keep the short label before the colon, e.g. "Not useful"
+  mutate(label = glue("{utility} – {sub(':.*', '', description)}")) |>
+  arrange(utility)
+
+utility_levels |>
+  left_join(
+    ai_review_summary |>
+      group_by(utility) |>
+      summarise(
+        n = n(),
+        n_comp = mean_sd(n_comp),
+        avg_spec = mean_sd(avg_spec),
+        nchar = mean_sd(nchar, digits = 0),
+        .groups = "drop"
+      ),
+    by = "utility"
+  ) |>
+  transmute(
+    `Utility Score` = label,
+    `% of Reviews` = sprintf(
+      "%.1f%% (%d)",
+      100 * coalesce(n, 0L) / n_ai_reviews,
+      coalesce(n, 0L)
+    ),
+    `Competencies Detected (mean ± SD)` = n_comp,
+    `Specificity (mean ± SD)` = avg_spec,
+    `Evaluation Length, chars (mean ± SD)` = nchar
+  ) |>
+  kable()
+HTML(glue("n = {n_ai_reviews} formative evaluations reviewed by the AI"))
+```
 ```{r}
 dbFinish(conn)
 ```
