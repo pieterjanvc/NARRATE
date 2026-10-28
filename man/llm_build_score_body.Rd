@@ -4,13 +4,16 @@
 \alias{llm_build_score_body}
 \title{Build a responses API request body for competency scoring}
 \usage{
-llm_build_score_body(extractions, prompt)
+llm_build_score_body(extractions, prompt, max_output_tokens = 4000L)
 }
 \arguments{
 \item{extractions}{List of extraction items; each has cIndex (integer order
 position within the rubric) and text (character vector)}
 
 \item{prompt}{System prompt (scoring instructions)}
+
+\item{max_output_tokens}{Output token cap, reasoning tokens included.
+Default = 4000. Truncated reviews end up at statusCode -6.}
 }
 \value{
 Named list for use as a responses API body (model field excluded)

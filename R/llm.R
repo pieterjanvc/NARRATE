@@ -33,7 +33,7 @@ llm_request <- function(
 #' Extract the output text from a responses API result
 #'
 #' Reasoning models can return a reasoning item before the message, so the
-#' text is taken from the first item of type "message" rather than output[[1]]
+#' text is taken from the first item of type "message" rather than output[\[1\]]
 #'
 #' @param resp Parsed responses API result
 #' @returns Character string, or NULL if no message text is present
@@ -44,6 +44,19 @@ llm_output_text <- function(resp) {
     }
   }
   NULL
+}
+
+#' Check if a responses API result was cut off by max_output_tokens
+#'
+#' Reasoning tokens count towards max_output_tokens, so a reasoning model can
+#' run out before (or while) writing its answer. Such a result has status
+#' "incomplete" with reason "max_output_tokens".
+#'
+#' @param resp Parsed responses API result
+#' @returns TRUE if the output was truncated, FALSE otherwise
+llm_output_truncated <- function(resp) {
+  identical(resp$status, "incomplete") &&
+    identical(resp$incomplete_details$reason, "max_output_tokens")
 }
 
 # ─── Real-time API calls ──────────────────────────────────────────────────────

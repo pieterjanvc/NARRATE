@@ -10,6 +10,7 @@ llm_comp_extract_batch_submit(
   model = llm_default_model,
   endpoint = llm_default_endpoint,
   api_key = Sys.getenv("HUIT_API_NARRATE"),
+  max_output_tokens = 2500L,
   verbose = FALSE,
   force = FALSE
 )
@@ -24,6 +25,9 @@ llm_comp_extract_batch_submit(
 \item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
 
 \item{api_key}{API key. Default = HUIT_API_NARRATE env var}
+
+\item{max_output_tokens}{Output token cap, reasoning tokens included.
+Default = 2500. Truncated reviews end up at statusCode -5.}
 
 \item{verbose}{Print progress messages. Default = FALSE}
 

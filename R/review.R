@@ -43,6 +43,9 @@
 #' @param review_ids Integer vector of review_assignment IDs to process
 #' @param model OpenAI model name. Default = llm_default_model
 #' @param endpoint Gateway base URL. Default = llm_default_endpoint
+#' @param max_output_tokens Output token cap, reasoning tokens included.
+#'   Default = 2500. Raise it to rerun reviews left at statusCode -5
+#'   (extraction truncated), together with force = TRUE.
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Reprocess even if statusCode != 0. Default = FALSE
 #'
@@ -51,13 +54,15 @@
 #' @returns Data frame summarising results per review_id
 #'   (review_id, statusCode, tokens_in, tokens_out). statusCode 6 means
 #'   extraction succeeded but dbCompExtractionCheckConflicts() found a rule-2
-#'   violation (see status_codes table).
+#'   violation, -5 that the output hit max_output_tokens (see status_codes
+#'   table).
 #' @export
 llm_comp_extract_run <- function(
   conn,
   review_ids,
   model = llm_default_model,
   endpoint = llm_default_endpoint,
+  max_output_tokens = 2500L,
   verbose = FALSE,
   force = FALSE
 ) {
@@ -72,10 +77,15 @@ llm_comp_extract_run <- function(
       evaluation_text = review_info$evaluation[i],
       prompt = review_info$prompt[i],
       model = model,
-      endpoint = endpoint
+      endpoint = endpoint,
+      max_output_tokens = max_output_tokens
     )
 
-    new_status <- if (result$statusCode == 2) 3L else -2L
+    new_status <- switch(as.character(result$statusCode),
+      "2" = 3L,
+      "3" = -5L, # output truncated (max_output_tokens)
+      -2L
+    )
 
     if (result$statusCode == 2 && length(result$data) > 0) {
       write_result <- dbCompExtraction(conn, rid, result$data, commit = FALSE)
@@ -314,6 +324,9 @@ llm_comp_reanchor_run <- function(
 #' @param review_ids Integer vector of review_assignment IDs to process
 #' @param model OpenAI model name. Default = llm_default_model
 #' @param endpoint Gateway base URL. Default = llm_default_endpoint
+#' @param max_output_tokens Output token cap, reasoning tokens included.
+#'   Default = 4000. Raise it to rerun reviews left at statusCode -6
+#'   (scoring truncated), together with force = TRUE.
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Reprocess even if statusCode != 3. Default = FALSE
 #'
@@ -327,6 +340,7 @@ llm_comp_score_run <- function(
   review_ids,
   model = llm_default_model,
   endpoint = llm_default_endpoint,
+  max_output_tokens = 4000L,
   verbose = FALSE,
   force = FALSE
 ) {
@@ -351,10 +365,15 @@ llm_comp_score_run <- function(
       extractions = unname(extr),
       prompt = review_info$prompt[i],
       model = model,
-      endpoint = endpoint
+      endpoint = endpoint,
+      max_output_tokens = max_output_tokens
     )
 
-    new_status <- if (result$statusCode == 2) 5L else -3L
+    new_status <- switch(as.character(result$statusCode),
+      "2" = 5L,
+      "3" = -6L, # output truncated (max_output_tokens)
+      -3L
+    )
 
     if (result$statusCode == 2) {
       db_write_score_specificity(conn, rid, result$data$competencies, commit = FALSE)
@@ -389,7 +408,131 @@ llm_comp_score_run <- function(
   bind_rows(results)
 }
 
+#' Rerun truncated reviews live with a higher output token cap
+#'
+#' Takes reviews whose output hit max_output_tokens through the rest of the
+#' pipeline synchronously: statusCode -5 (extraction truncated) is
+#' re-extracted, any resulting rule-2 conflicts resolved, and the extracted
+#' reviews plus any at -6 (scoring truncated) scored. Reviews at other
+#' statuses are ignored.
+#'
+#' @param conn DB connection
+#' @param review_ids Integer vector of review_assignment IDs (any status;
+#'   only those at -5 / -6 are processed)
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param max_output_tokens Output token cap for extraction and scoring.
+#'   Default = 8000
+#' @param verbose Print progress messages. Default = TRUE
+#'
+#' @import dplyr
+#' @returns Data frame (review_id, statusCode) with the new status of every
+#'   processed review, or NULL if none were at -5 / -6
+#' @export
+llm_comp_fix_truncated_run <- function(
+  conn,
+  review_ids,
+  model = llm_default_model,
+  max_output_tokens = 8000L,
+  verbose = TRUE
+) {
+  ids_at <- function(ids, codes) {
+    tbl(conn, "review_assignment") |>
+      filter(id %in% local(ids), statusCode %in% local(codes)) |>
+      pull(id)
+  }
+
+  trunc_extract <- ids_at(review_ids, -5L)
+  trunc_score <- ids_at(review_ids, -6L)
+  if (length(trunc_extract) + length(trunc_score) == 0) return(invisible(NULL))
+
+  if (length(trunc_extract) > 0) {
+    if (verbose) message("Live extraction: ", length(trunc_extract), " reviews")
+    llm_comp_extract_run(
+      conn, trunc_extract,
+      model = model, max_output_tokens = max_output_tokens,
+      verbose = verbose, force = TRUE
+    )
+
+    to_resolve <- ids_at(trunc_extract, 6L)
+    if (length(to_resolve) > 0) {
+      if (verbose) message("Live conflict resolution: ", length(to_resolve), " reviews")
+      llm_comp_resolve_run(conn, to_resolve, model = model, verbose = verbose)
+    }
+  }
+
+  to_score <- c(ids_at(trunc_extract, 3L), trunc_score)
+  if (length(to_score) > 0) {
+    if (verbose) message("Live scoring: ", length(to_score), " reviews")
+    llm_comp_score_run(
+      conn, to_score,
+      model = model, max_output_tokens = max_output_tokens,
+      verbose = verbose, force = TRUE
+    )
+  }
+
+  tbl(conn, "review_assignment") |>
+    filter(id %in% local(c(trunc_extract, trunc_score))) |>
+    select(review_id = id, statusCode) |>
+    collect()
+}
+
 # ─── Batch submit ─────────────────────────────────────────────────────────────
+
+#' Submit a pipeline step as batches of limited size
+#'
+#' Splits review_ids into chunks of at most chunk_size and submits each as a
+#' separate batch via llm_comp_extract_batch_submit(),
+#' llm_comp_resolve_batch_submit() or llm_comp_score_batch_submit(). The
+#' batches run in parallel, so a large step is not held up by one huge batch
+#' and a failed / expired batch only affects its own chunk.
+#'
+#' @param conn DB connection
+#' @param step "extract", "resolve" or "score"
+#' @param review_ids Integer vector of review_assignment IDs to submit
+#' @param chunk_size Max reviews per batch. Default = 700
+#' @param model OpenAI model name. Default = llm_default_model
+#' @param force Passed on to the submit function. Default = FALSE
+#' @param notify Launch a batch_status_notify() PushOver monitor per batch.
+#'   Default = FALSE
+#' @param notify_max_wait Seconds after which a monitor gives up.
+#'   Default = 26 hours (batches have a 24h completion window)
+#' @param verbose Print progress messages. Default = TRUE
+#'
+#' @import dplyr
+#' @returns Inserted batch records, one row per submitted batch (zero rows if
+#'   nothing was submitted)
+#' @export
+llm_comp_batch_submit_chunks <- function(
+  conn,
+  step = c("extract", "resolve", "score"),
+  review_ids,
+  chunk_size = 700L,
+  model = llm_default_model,
+  force = FALSE,
+  notify = FALSE,
+  notify_max_wait = 26 * 3600,
+  verbose = TRUE
+) {
+  step <- match.arg(step)
+  submit_fun <- switch(step,
+    extract = llm_comp_extract_batch_submit,
+    resolve = llm_comp_resolve_batch_submit,
+    score = llm_comp_score_batch_submit
+  )
+
+  chunks <- split(sort(review_ids), ceiling(seq_along(review_ids) / chunk_size))
+  batches <- lapply(chunks, function(chunk) {
+    b <- submit_fun(conn, chunk, model = model, verbose = verbose, force = force)
+    if (is.null(b)) return(NULL)
+    if (notify) batch_status_notify(b$id, conn@dbname, max_wait = notify_max_wait)
+    if (verbose) {
+      message(sprintf("%s batch %d submitted (%d reviews)", step, b$id, length(chunk)))
+    }
+    b
+  })
+
+  bind_rows(batches)
+}
 
 #' Submit a batch competency extraction job
 #'
@@ -401,6 +544,8 @@ llm_comp_score_run <- function(
 #' @param model OpenAI model name. Default = llm_default_model
 #' @param endpoint Gateway base URL. Default = llm_default_endpoint
 #' @param api_key API key. Default = HUIT_API_NARRATE env var
+#' @param max_output_tokens Output token cap, reasoning tokens included.
+#'   Default = 2500. Truncated reviews end up at statusCode -5.
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Resubmit even if already in-progress or completed. Default = FALSE
 #'
@@ -412,6 +557,7 @@ llm_comp_extract_batch_submit <- function(
   model = llm_default_model,
   endpoint = llm_default_endpoint,
   api_key = Sys.getenv("HUIT_API_NARRATE"),
+  max_output_tokens = 2500L,
   verbose = FALSE,
   force = FALSE
 ) {
@@ -420,7 +566,9 @@ llm_comp_extract_batch_submit <- function(
 
   requests <- setNames(
     lapply(seq_len(nrow(review_info)), function(i) {
-      llm_build_extract_body(review_info$evaluation[i], review_info$prompt[i])
+      llm_build_extract_body(
+        review_info$evaluation[i], review_info$prompt[i], max_output_tokens
+      )
     }),
     paste0("review-", review_info$review_id)
   )
@@ -446,6 +594,8 @@ llm_comp_extract_batch_submit <- function(
 #' @param model OpenAI model name. Default = llm_default_model
 #' @param endpoint Gateway base URL. Default = llm_default_endpoint
 #' @param api_key API key. Default = HUIT_API_NARRATE env var
+#' @param max_output_tokens Output token cap, reasoning tokens included.
+#'   Default = 4000. Truncated reviews end up at statusCode -6.
 #' @param verbose Print progress messages. Default = FALSE
 #' @param force Resubmit even if already scored. Default = FALSE
 #'
@@ -457,6 +607,7 @@ llm_comp_score_batch_submit <- function(
   model = llm_default_model,
   endpoint = llm_default_endpoint,
   api_key = Sys.getenv("HUIT_API_NARRATE"),
+  max_output_tokens = 4000L,
   verbose = FALSE,
   force = FALSE
 ) {
@@ -474,7 +625,8 @@ llm_comp_score_batch_submit <- function(
       )
       llm_build_score_body(
         unname(extr),
-        review_info$prompt[review_info$review_id == rid]
+        review_info$prompt[review_info$review_id == rid],
+        max_output_tokens
       )
     }),
     paste0("review-", review_info$review_id)
@@ -647,6 +799,7 @@ batch_extract_process <- function(batch_id, conn) {
   # duplicate cIndex) can downgrade that review's status to -2 below, instead
   # of leaving it marked as complete or aborting the whole batch.
   write_status <- sapply(results, function(r) {
+    if (r$statusCode == -3) return(-5L) # output truncated (max_output_tokens)
     if (r$statusCode != 2) return(-2L)
 
     extractions <- r$data$extractions
@@ -918,7 +1071,8 @@ batch_score_process <- function(batch_id, conn) {
     sent_val <- if (r$statusCode == 2) r$data$sentiment else NA_integer_
     data.frame(
       id = rid,
-      statusCode = if (r$statusCode == 2) 5L else -3L,
+      # -6 = output truncated (max_output_tokens), -3 = any other failure
+      statusCode = if (r$statusCode == 2) 5L else if (r$statusCode == -3) -6L else -3L,
       tokens_in = r$tokens_in,
       tokens_out = r$tokens_out,
       utility_score_value = util_val,
@@ -947,4 +1101,29 @@ batch_score_process <- function(batch_id, conn) {
     ),
     conn, "batch"
   )
+}
+
+#' Process a completed batch, whatever its pipeline step
+#'
+#' Works out the batch's step with db_batch_step() and hands it to
+#' batch_extract_process(), batch_resolve_process() or batch_score_process().
+#' Re-anchor batches are not covered (their submitted status 8 is not
+#' recognised); use batch_reanchor_process() for those.
+#'
+#' @param batch_id Internal batch ID (row id in the batch table)
+#' @param conn DB connection
+#'
+#' @returns The step ("extract", "resolve" or "score") invisibly after
+#'   processing, or NA if the step can't be determined (nothing processed)
+#' @export
+batch_process <- function(batch_id, conn) {
+  step <- db_batch_step(conn, batch_id)
+  if (is.na(step)) return(invisible(NA_character_))
+
+  switch(step,
+    extract = batch_extract_process(batch_id, conn),
+    resolve = batch_resolve_process(batch_id, conn),
+    score = batch_score_process(batch_id, conn)
+  )
+  invisible(step)
 }

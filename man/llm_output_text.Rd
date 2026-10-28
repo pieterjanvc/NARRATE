@@ -14,5 +14,5 @@ Character string, or NULL if no message text is present
 }
 \description{
 Reasoning models can return a reasoning item before the message, so the
-text is taken from the first item of type "message" rather than output[\link{1}]
+text is taken from the first item of type "message" rather than output[[1]]
 }

@@ -4,12 +4,18 @@
 \alias{llm_build_extract_body}
 \title{Build a responses API request body for competency extraction}
 \usage{
-llm_build_extract_body(evaluation_text, prompt)
+llm_build_extract_body(evaluation_text, prompt, max_output_tokens = 2500L)
 }
 \arguments{
 \item{evaluation_text}{Evaluation text string}
 
 \item{prompt}{System prompt (extraction instructions)}
+
+\item{max_output_tokens}{Output token cap, reasoning tokens included.
+Default = 2500. Real extraction output tops out around 1.2k tokens (p99
+over ~750 reviews), so 2500 leaves 2x headroom while failing a runaway
+repetition loop fast. A reasoning model occasionally needs more; such
+reviews end up at statusCode -5 to be rerun with a higher cap.}
 }
 \value{
 Named list for use as a responses API body (model field excluded)

@@ -9,6 +9,7 @@ llm_comp_score_run(
   review_ids,
   model = llm_default_model,
   endpoint = llm_default_endpoint,
+  max_output_tokens = 4000L,
   verbose = FALSE,
   force = FALSE
 )
@@ -21,6 +22,10 @@ llm_comp_score_run(
 \item{model}{OpenAI model name. Default = llm_default_model}
 
 \item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
+
+\item{max_output_tokens}{Output token cap, reasoning tokens included.
+Default = 4000. Raise it to rerun reviews left at statusCode -6
+(scoring truncated), together with force = TRUE.}
 
 \item{verbose}{Print progress messages. Default = FALSE}
 
