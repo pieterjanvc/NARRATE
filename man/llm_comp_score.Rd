@@ -9,6 +9,7 @@ llm_comp_score(
   prompt,
   model = llm_default_model,
   endpoint = llm_default_endpoint,
+  max_output_tokens = 4000L,
   debug = FALSE
 )
 }
@@ -21,6 +22,9 @@ each element has cIndex (integer order position within the rubric) and text (cha
 \item{model}{OpenAI model name. Default = llm_default_model}
 
 \item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
+
+\item{max_output_tokens}{Output token cap, see llm_build_score_body().
+Default = 4000}
 
 \item{debug}{Return raw model output text as well. Default = FALSE}
 }

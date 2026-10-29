@@ -8,16 +8,18 @@
 #'
 #' @param evaluation_text Evaluation text string
 #' @param prompt System prompt (extraction instructions)
+#' @param max_output_tokens Output token cap, reasoning tokens included.
+#'   Default = 2500. Real extraction output tops out around 1.2k tokens (p99
+#'   over ~750 reviews), so 2500 leaves 2x headroom while failing a runaway
+#'   repetition loop fast. A reasoning model occasionally needs more; such
+#'   reviews end up at statusCode -5 to be rerun with a higher cap.
 #' @returns Named list for use as a responses API body (model field excluded)
-llm_build_extract_body <- function(evaluation_text, prompt) {
+llm_build_extract_body <- function(evaluation_text, prompt, max_output_tokens = 2500L) {
   list(
     instructions = prompt,
     input = paste0(evaluation_text, "\n\nRespond with JSON as instructed."),
     text = list(format = list(type = "json_object")),
-    # Real extraction output tops out around 1.2k tokens (p99 over ~750 reviews);
-    # 2500 leaves 2x headroom while failing a runaway repetition loop fast
-    # instead of burning to a 10k ceiling.
-    max_output_tokens = 2500L
+    max_output_tokens = as.integer(max_output_tokens)
   )
 }
 
@@ -60,8 +62,10 @@ llm_build_reanchor_body <- function(reanchor_text, prompt) {
 #' @param extractions List of extraction items; each has cIndex (integer order
 #'   position within the rubric) and text (character vector)
 #' @param prompt System prompt (scoring instructions)
+#' @param max_output_tokens Output token cap, reasoning tokens included.
+#'   Default = 4000. Truncated reviews end up at statusCode -6.
 #' @returns Named list for use as a responses API body (model field excluded)
-llm_build_score_body <- function(extractions, prompt) {
+llm_build_score_body <- function(extractions, prompt, max_output_tokens = 4000L) {
   user_msg <- jsonlite::toJSON(
     list(extractions = lapply(extractions, function(item) {
       list(cIndex = item$cIndex, text = as.list(item$text))
@@ -72,7 +76,7 @@ llm_build_score_body <- function(extractions, prompt) {
     instructions = prompt,
     input = paste0(user_msg, "\n\nRespond with JSON as instructed."),
     text = list(format = list(type = "json_object")),
-    max_output_tokens = 4000L
+    max_output_tokens = as.integer(max_output_tokens)
   )
 }
 
@@ -88,6 +92,8 @@ llm_build_score_body <- function(extractions, prompt) {
 #' @param prompt System prompt (extraction instructions)
 #' @param model OpenAI model name. Default = llm_default_model
 #' @param endpoint Gateway base URL. Default = llm_default_endpoint
+#' @param max_output_tokens Output token cap, see llm_build_extract_body().
+#'   Default = 2500
 #' @param debug Return raw model output text as well. Default = FALSE
 #'
 #' @import httr2
@@ -103,9 +109,10 @@ llm_comp_extract <- function(
   prompt,
   model = llm_default_model,
   endpoint = llm_default_endpoint,
+  max_output_tokens = 2500L,
   debug = FALSE
 ) {
-  body <- llm_build_extract_body(evaluation_text, prompt)
+  body <- llm_build_extract_body(evaluation_text, prompt, max_output_tokens)
   body$model <- model
 
   req <- llm_request("/responses", endpoint) |>
@@ -125,6 +132,14 @@ llm_comp_extract <- function(
   raw_text <- llm_output_text(resp)
   tokens_in <- resp$usage$input_tokens
   tokens_out <- resp$usage$output_tokens
+
+  if (llm_output_truncated(resp)) {
+    return(list(
+      statusCode = 3, data = NULL,
+      tokens_in = tokens_in, tokens_out = tokens_out,
+      raw = if (debug) raw_text else NULL
+    ))
+  }
 
   parsed <- tryCatch(
     fromJSON(raw_text, simplifyVector = FALSE),
@@ -161,6 +176,8 @@ llm_comp_extract <- function(
 #' @param prompt System prompt (scoring instructions)
 #' @param model OpenAI model name. Default = llm_default_model
 #' @param endpoint Gateway base URL. Default = llm_default_endpoint
+#' @param max_output_tokens Output token cap, see llm_build_score_body().
+#'   Default = 4000
 #' @param debug Return raw model output text as well. Default = FALSE
 #'
 #' @import httr2
@@ -176,9 +193,10 @@ llm_comp_score <- function(
   prompt,
   model = llm_default_model,
   endpoint = llm_default_endpoint,
+  max_output_tokens = 4000L,
   debug = FALSE
 ) {
-  body <- llm_build_score_body(extractions, prompt)
+  body <- llm_build_score_body(extractions, prompt, max_output_tokens)
   body$model <- model
 
   req <- llm_request("/responses", endpoint) |>
@@ -198,6 +216,14 @@ llm_comp_score <- function(
   raw_text <- llm_output_text(resp)
   tokens_in <- resp$usage$input_tokens
   tokens_out <- resp$usage$output_tokens
+
+  if (llm_output_truncated(resp)) {
+    return(list(
+      statusCode = 3, data = NULL,
+      tokens_in = tokens_in, tokens_out = tokens_out,
+      raw = if (debug) raw_text else NULL
+    ))
+  }
 
   parsed <- tryCatch(
     fromJSON(raw_text, simplifyVector = FALSE),
@@ -894,6 +920,95 @@ db_record_batch <- function(conn, file_input_id, batch_id, review_ids, review_st
   batch_info
 }
 
+# ─── Batch / review lookups ──────────────────────────────────────────────────
+
+#' Batches holding a set of reviews
+#'
+#' @param conn DB connection
+#' @param review_ids Integer vector of review_assignment IDs
+#' @param open_only Only return batches still open (statusCode 1 Submitted,
+#'   2 In progress or 3 Completed but not yet processed). Default = FALSE
+#'
+#' @import dplyr
+#' @returns Data frame (id, created, statusCode, n_requests) with the latest
+#'   local batch status, ordered by id
+db_review_batches <- function(conn, review_ids, open_only = FALSE) {
+  batches <- tbl(conn, "batch_review") |>
+    filter(review_assignment_id %in% local(review_ids)) |>
+    distinct(id = batch_id) |>
+    inner_join(tbl(conn, "batch"), by = "id") |>
+    select(id, created, statusCode, n_requests)
+  if (open_only) batches <- filter(batches, statusCode %in% c(1, 2, 3))
+  batches |>
+    collect() |>
+    arrange(id)
+}
+
+#' Pipeline step of an unprocessed batch
+#'
+#' The batch table doesn't record the step, but until a batch is processed its
+#' reviews carry the "submitted" statusCode of that step: 1 extraction,
+#' 7 conflict resolution, 4 scoring.
+#'
+#' @param conn DB connection
+#' @param batch_id Internal batch ID (row id in the batch table)
+#'
+#' @import dplyr
+#' @returns "extract", "resolve" or "score", or NA if none of the batch's
+#'   reviews is at a submitted status (e.g. already processed)
+db_batch_step <- function(conn, batch_id) {
+  submitted_status <- c(extract = 1L, score = 4L, resolve = 7L)
+  st <- tbl(conn, "batch_review") |>
+    filter(batch_id == local(batch_id)) |>
+    inner_join(
+      tbl(conn, "review_assignment") |> select(id, statusCode),
+      by = c("review_assignment_id" = "id")
+    ) |>
+    distinct(statusCode) |>
+    pull(statusCode)
+  names(submitted_status)[submitted_status %in% st][1]
+}
+
+#' Number of extraction attempts per review
+#'
+#' Counts the batches each review was part of. Only meaningful for reviews
+#' that never got past extraction (e.g. statusCode -2), where every batch was
+#' an extraction batch. Live extraction runs are not counted.
+#'
+#' @param conn DB connection
+#' @param review_ids Integer vector of review_assignment IDs
+#'
+#' @import dplyr
+#' @returns Integer vector of attempts, in the order of review_ids
+db_extract_attempts <- function(conn, review_ids) {
+  attempts <- tbl(conn, "batch_review") |>
+    filter(review_assignment_id %in% local(review_ids)) |>
+    count(review_assignment_id) |>
+    collect()
+  as.integer(coalesce(
+    attempts$n[match(review_ids, attempts$review_assignment_id)], 0L
+  ))
+}
+
+#' Review count per statusCode
+#'
+#' @param conn DB connection
+#' @param review_ids Integer vector of review_assignment IDs
+#'
+#' @import dplyr
+#' @returns Data frame (statusCode, n, description), ordered by statusCode
+#' @export
+db_review_progress <- function(conn, review_ids) {
+  codes <- status_codes(conn, "review_assignment") |>
+    select(statusCode = code, description)
+  tbl(conn, "review_assignment") |>
+    filter(id %in% local(review_ids)) |>
+    count(statusCode) |>
+    collect() |>
+    left_join(codes, by = "statusCode") |>
+    arrange(statusCode)
+}
+
 # ─── Batch status and result parsing ─────────────────────────────────────────
 
 #' Check and update the status of a batch job
@@ -988,6 +1103,13 @@ batch_results_preprocess <- function(file_output_id) {
     raw_text <- llm_output_text(rb)
     tokens_in <- rb$usage$input_tokens
     tokens_out <- rb$usage$output_tokens
+
+    if (llm_output_truncated(rb)) {
+      return(list(
+        review_id = review_id, statusCode = -3,
+        data = NULL, tokens_in = tokens_in, tokens_out = tokens_out
+      ))
+    }
 
     parsed <- tryCatch(
       fromJSON(raw_text, simplifyVector = FALSE),

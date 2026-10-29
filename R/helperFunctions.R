@@ -651,6 +651,59 @@ batch_status_notify <- function(
   invisible(list(process = px, script = script_path, log = log_path))
 }
 
+#' Check if a batch_status_notify() monitor is running for a batch
+#'
+#' Monitors run on this machine and die with a reboot / shutdown, so use this
+#' to decide whether to relaunch one. Matches the notify_<batch_id>_<stamp>.R
+#' script path batch_status_notify() starts Rscript with (Linux / macOS only,
+#' uses pgrep).
+#'
+#' @param batch_id Internal batch ID (row id in the batch table)
+#'
+#' @returns TRUE if a monitor process for the batch is running
+batch_monitor_running <- function(batch_id) {
+  pids <- suppressWarnings(system2(
+    "pgrep", c("-f", shQuote(sprintf("notify_%d_[0-9-]+\\.R", batch_id))),
+    stdout = TRUE, stderr = FALSE
+  ))
+  length(pids) > 0
+}
+
+#' Send a PushOver notification
+#'
+#' Reads the PushOver credentials (JSON with url, key and user) from the
+#' keyring entry PUSHOVER_API, same as batch_status_notify().
+#'
+#' @param message Notification text
+#'
+#' @returns Invisibly, the httr2 response, or a try-error if sending failed
+#' @export
+pushover_send <- function(message) {
+  auth <- keyring::key_get("PUSHOVER_API", "default") |> jsonlite::fromJSON()
+  invisible(try(
+    httr2::request(auth$url) |>
+      httr2::req_body_form(token = auth$key, user = auth$user, message = message) |>
+      httr2::req_perform(),
+    silent = TRUE
+  ))
+}
+
+#' Ask a question on the console
+#'
+#' Uses readline() in an interactive session and reads a line from stdin
+#' otherwise (under Rscript, readline() returns immediately without input).
+#'
+#' @param question Text to show
+#'
+#' @returns The answer, or character(0) if stdin has no input
+console_ask <- function(question) {
+  cat(question)
+  if (interactive()) return(readline())
+  con <- file("stdin")
+  on.exit(close(con))
+  readLines(con, n = 1)
+}
+
 #' Look up status codes for a database table or function
 #'
 #' @param conn NARRATE database connection

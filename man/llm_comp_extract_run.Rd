@@ -9,6 +9,7 @@ llm_comp_extract_run(
   review_ids,
   model = llm_default_model,
   endpoint = llm_default_endpoint,
+  max_output_tokens = 2500L,
   verbose = FALSE,
   force = FALSE
 )
@@ -22,6 +23,10 @@ llm_comp_extract_run(
 
 \item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
 
+\item{max_output_tokens}{Output token cap, reasoning tokens included.
+Default = 2500. Raise it to rerun reviews left at statusCode -5
+(extraction truncated), together with force = TRUE.}
+
 \item{verbose}{Print progress messages. Default = FALSE}
 
 \item{force}{Reprocess even if statusCode != 0. Default = FALSE}
@@ -30,7 +35,8 @@ llm_comp_extract_run(
 Data frame summarising results per review_id
 (review_id, statusCode, tokens_in, tokens_out). statusCode 6 means
 extraction succeeded but dbCompExtractionCheckConflicts() found a rule-2
-violation (see status_codes table).
+violation, -5 that the output hit max_output_tokens (see status_codes
+table).
 }
 \description{
 Fetches evaluation text and prompts from the database, calls llm_comp_extract()

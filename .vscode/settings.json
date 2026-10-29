@@ -9,5 +9,8 @@
   // If you use Shiny for Python, this setting takes precedence
   "shiny.previewType": "external",
 
+  // Open Quarto (.qmd) render previews in the external browser
+  "quarto.render.previewType": "external",
+
   "claudeCode.useCtrlEnterToSend": true
 }

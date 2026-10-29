@@ -9,6 +9,7 @@ llm_comp_extract(
   prompt,
   model = llm_default_model,
   endpoint = llm_default_endpoint,
+  max_output_tokens = 2500L,
   debug = FALSE
 )
 }
@@ -20,6 +21,9 @@ llm_comp_extract(
 \item{model}{OpenAI model name. Default = llm_default_model}
 
 \item{endpoint}{Gateway base URL. Default = llm_default_endpoint}
+
+\item{max_output_tokens}{Output token cap, see llm_build_extract_body().
+Default = 2500}
 
 \item{debug}{Return raw model output text as well. Default = FALSE}
 }

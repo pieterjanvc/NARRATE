@@ -285,6 +285,8 @@ INSERT INTO "status_codes" ("table", "code", "description", "note") VALUES
   ('review_assignment', -2, 'AI extraction failed',       NULL),
   ('review_assignment', -3, 'AI scoring failed',          NULL),
   ('review_assignment', -4, 'Extraction conflict unresolved', 'Resolve attempts exhausted (see llm_comp_resolve_run()); needs human review'),
+  ('review_assignment', -5, 'AI extraction truncated',    'Output hit max_output_tokens (reasoning tokens count towards it); rerun with llm_comp_extract_run(..., max_output_tokens = <higher>, force = TRUE)'),
+  ('review_assignment', -6, 'AI scoring truncated',       'Output hit max_output_tokens (reasoning tokens count towards it); rerun with llm_comp_score_run(..., max_output_tokens = <higher>, force = TRUE)'),
   ('review_assignment',  3, 'Batch extraction complete',  NULL),
   ('review_assignment',  4, 'Batch scoring submitted',    NULL),
   ('review_assignment',  5, 'Batch scoring complete',     NULL),
@@ -305,13 +307,16 @@ INSERT INTO "status_codes" ("function", "code", "description") VALUES
   ('llm_comp_extract',         0, 'API error'),
   ('llm_comp_extract',         1, 'Parse error'),
   ('llm_comp_extract',         2, 'Success'),
+  ('llm_comp_extract',         3, 'Output truncated (max_output_tokens)'),
   -- llm_comp_score return codes (not stored in DB)
   ('llm_comp_score',           0, 'API error'),
   ('llm_comp_score',           1, 'Parse error'),
   ('llm_comp_score',           2, 'Success'),
+  ('llm_comp_score',           3, 'Output truncated (max_output_tokens)'),
   -- batch_results_preprocess return codes (not stored in DB)
   ('batch_results_preprocess', -1, 'Missing result'),
   ('batch_results_preprocess', -2, 'Parse error'),
+  ('batch_results_preprocess', -3, 'Output truncated (max_output_tokens)'),
   ('batch_results_preprocess',  2, 'Success');
 
 -- Default rubric seed data (competencies, disambiguation, scores, rules).
