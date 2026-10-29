@@ -1,0 +1,534 @@
+---
+title: "Core faculty evaluation"
+format: html
+execute:
+  echo: false
+---
+
+```{r}
+#| message: false
+#| warning: false
+library(knitr)
+library(glue)
+library(sqlife)
+library(dplyr)
+library(htmltools)
+library(ggplot2)
+pkgload::load_all(here::here(), quiet = TRUE)
+
+rubric_id <- 5
+```
+
+<!--
+TODO: revisit once more core faculty data is available. These choices are
+tailored to the current small number of core faculty (7 people, 4 with
+evaluations before the program) and a single program start date.
+
+Program start / definitions
+- `core_start` is hard-coded to 2025-01-01 for everyone. `evaluator.core_faculty_start`
+  holds a per-person start date; if starts become staggered, define
+  before/after per person (and the vertical line on the charts no longer applies)
+- "Ever-core" lumps anyone who was core at some point. If faculty leave the
+  program, their later non-core evaluations currently count as "Ever-core / After"
+- Periods are based on rotation date, not on when the evaluation was written
+
+Charts
+- `person_colors` only has 8 palette slots: with more than 8 ever-core faculty
+  the per-person stacked bar and line charts get NA colours. Switch to
+  small multiples (facet per person) or fold into "Other"
+- `clerkship_colors` is hard-coded to Medicine/Neurology; new clerkships with
+  core faculty get no colour
+- `date_breaks = "1 month"` on all x-axes will get crowded over a longer period
+- The x-axis range (`month_range`) is shared by all charts; core-only charts are
+  empty before 2025
+- Months with very few evaluations (e.g. a single one in July 2025) make the
+  monthly averages noisy; consider a minimum n per month on the line charts
+
+Statistics
+- The "Very low n" warning callout and its wording assume very few core
+  faculty; revise or remove once n is reasonable
+- The caveat that both groups looked "roughly flat before 2025" is a
+  statement about the current data; recheck, ideally with a formal pre-trend
+  test (group × time interaction in the before period)
+- The DiD model only has a random intercept per evaluator. With more core
+  faculty add a random slope for period, `(1 + period | evaluator)`; the current
+  df/p-value treat evaluations as fairly independent evidence of change
+- Not adjusted for clerkship or academic title; add as covariates when the
+  groups are large enough
+- With more time points, consider an event-study / interrupted time series
+  instead of a single before/after split
+-->
+
+## Number of clerkship evaluations over time
+Number of **formative** evaluations per month (by rotation date), core vs non-core faculty
+```{r}
+db <- ifelse(interactive(), "local/narrate.db", "../local/narrate.db")
+
+last_modified <- format(file.info(db)$mtime, "%B %-d, %Y")
+
+conn <- dbGetConn(db)
+
+formative_evals <- tbl(conn, "evaluation") |>
+  filter(summary_flg == 0) |>
+  inner_join(
+    tbl(conn, "rotation") |>
+      select(rotation_id = id, rotation_date, clerkship_id),
+    by = "rotation_id"
+  ) |>
+  inner_join(
+    tbl(conn, "clerkship") |> select(clerkship_id = id, clerkship),
+    by = "clerkship_id"
+  ) |>
+  select(evaluation_id = id, evaluator_id, core_faculty, rotation_date, clerkship) |>
+  collect() |>
+  mutate(
+    month = as.Date(paste0(substr(rotation_date, 1, 7), "-01")),
+    faculty = factor(
+      if_else(core_faculty %in% 1, "Core", "Non-core"),
+      levels = c("Non-core", "Core")
+    ),
+    clerkship = tools::toTitleCase(tolower(clerkship))
+  )
+
+formative_by_month <- formative_evals |> count(month, faculty)
+
+faculty_colors <- c("Core" = "#2a78d6", "Non-core" = "#eb6834")
+month_range <- range(formative_by_month$month) + c(-15, 15)
+
+plot_theme <- theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(colour = "grey90", linewidth = 0.3),
+    axis.text = element_text(colour = "grey35"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top",
+    legend.justification = "left",
+    plot.title.position = "plot"
+  )
+
+# Start of the core faculty program, marked on the line charts
+core_start <- as.Date("2025-01-01")
+core_start_line <- list(
+  geom_vline(
+    xintercept = core_start, linetype = "dashed",
+    linewidth = 0.4, colour = "grey50"
+  ),
+  annotate(
+    "text", x = core_start, y = 100, label = "Core faculty program starts",
+    hjust = -0.05, vjust = 1, size = 3.2, colour = "grey35"
+  )
+)
+
+month_totals <- formative_by_month |> count(month, wt = n)
+
+ggplot(formative_by_month, aes(month, n)) +
+  geom_col(
+    aes(fill = faculty),
+    width = 25, colour = "white", linewidth = 0.4
+  ) +
+  geom_text(
+    data = month_totals, aes(label = n),
+    vjust = -0.4, size = 3.5, colour = "grey20"
+  ) +
+  scale_fill_manual(values = faculty_colors, breaks = c("Core", "Non-core")) +
+  scale_x_date(
+    date_breaks = "1 month", date_labels = "%b %Y",
+    limits = month_range, expand = c(0, 0)
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.08))) +
+  labs(
+    title = "Formative evaluations per month",
+    x = NULL, y = "Evaluations", fill = NULL
+  ) +
+  plot_theme
+```
+
+```{r}
+core_by_month <- formative_evals |>
+  filter(faculty == "Core") |>
+  count(month, clerkship)
+core_totals <- core_by_month |> count(month, wt = n)
+
+# Distinct from the core/non-core colours above so hues don't change meaning
+clerkship_colors <- c("Medicine" = "#6250d6", "Neurology" = "#1baf7a")
+
+ggplot(core_by_month, aes(month, n)) +
+  geom_col(
+    aes(fill = clerkship),
+    width = 25, colour = "white", linewidth = 0.4
+  ) +
+  geom_text(
+    data = core_totals, aes(label = n),
+    vjust = -0.4, size = 3.5, colour = "grey20"
+  ) +
+  scale_fill_manual(values = clerkship_colors) +
+  scale_x_date(
+    date_breaks = "1 month", date_labels = "%b %Y",
+    limits = month_range, expand = c(0, 0)
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(
+    title = "Formative evaluations per month – core faculty only, by clerkship",
+    x = NULL, y = "Evaluations", fill = NULL
+  ) +
+  plot_theme
+```
+
+```{r}
+# Anyone who was core faculty at some point; evaluator rows sharing an
+# original_evaluator_id (e.g. after a title change) are the same person
+core_people <- tbl(conn, "evaluator") |>
+  select(evaluator_id = id, original_evaluator_id, evaluator) |>
+  collect() |>
+  group_by(original_evaluator_id) |>
+  filter(
+    any(evaluator_id %in% formative_evals$evaluator_id[
+      formative_evals$faculty == "Core"
+    ])
+  ) |>
+  mutate(
+    # Capitalise after spaces, apostrophes and hyphens (e.g. O'Hare)
+    person = gsub(
+      "(^|[ '-])([a-z])", "\\1\\U\\2",
+      tolower(first(evaluator)),
+      perl = TRUE
+    )
+  ) |>
+  ungroup()
+
+person_by_month <- formative_evals |>
+  inner_join(core_people, by = "evaluator_id") |>
+  count(month, person, faculty)
+
+# Fixed palette order, assigned to people by total evaluations (most first)
+person_order <- person_by_month |>
+  count(person, wt = n, sort = TRUE) |>
+  pull(person)
+person_colors <- setNames(
+  c(
+    "#2a78d6", "#eb6834", "#1baf7a", "#eda100",
+    "#e87ba4", "#008300", "#6250d6", "#e34948"
+  )[seq_along(person_order)],
+  person_order
+)
+person_by_month <- person_by_month |>
+  mutate(person = factor(person, levels = person_order))
+person_totals <- person_by_month |> count(month, wt = n)
+
+ggplot(person_by_month, aes(month, n)) +
+  geom_col(
+    aes(fill = person, alpha = faculty),
+    width = 25, colour = "white", linewidth = 0.4
+  ) +
+  geom_text(
+    data = person_totals, aes(label = n),
+    vjust = -0.4, size = 3.5, colour = "grey20"
+  ) +
+  scale_fill_manual(values = person_colors) +
+  # Lighter shade for evaluations given before becoming core faculty
+  scale_alpha_manual(
+    values = c("Core" = 1, "Non-core" = 0.35),
+    labels = c("Core" = "As core faculty", "Non-core" = "Before becoming core"),
+    breaks = c("Core", "Non-core")
+  ) +
+  guides(
+    fill = guide_legend(order = 1),
+    alpha = guide_legend(order = 2, override.aes = list(fill = "grey30"))
+  ) +
+  scale_x_date(
+    date_breaks = "1 month", date_labels = "%b %Y",
+    limits = month_range, expand = c(0, 0)
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(
+    title = "Formative evaluations per month – faculty who were ever core",
+    subtitle = "Includes their evaluations from before they became core faculty",
+    x = NULL, y = "Evaluations", fill = NULL, alpha = NULL
+  ) +
+  plot_theme
+```
+
+# AI review scores over time
+```{r}
+# AI reviews (rubric `rubric_id`) of the formative evaluations of faculty who
+# were ever core; review_scores() drops reviews that aren't completed
+ai_reviews <- tbl(conn, "review_assignment") |>
+  filter(rubric_id == local(rubric_id)) |>
+  inner_join(
+    tbl(conn, "reviewer") |> filter(human == 0) |> select(reviewer_id = id),
+    by = "reviewer_id"
+  ) |>
+  select(review_id = id, evaluation_id) |>
+  collect()
+
+person_evals <- formative_evals |>
+  inner_join(core_people, by = "evaluator_id") |>
+  select(evaluation_id, month, person, faculty)
+
+ai_quality <- ai_reviews |>
+  inner_join(
+    review_scores(conn, ai_reviews$review_id, error_on_incomplete = FALSE) |>
+      transmute(review_id, quality = 100 * (coverage + avg_specificity + utility)),
+    by = "review_id"
+  )
+
+person_scores <- ai_quality |>
+  inner_join(person_evals, by = "evaluation_id") |>
+  group_by(month, person, faculty) |>
+  summarise(quality = mean(quality), n = n(), .groups = "drop") |>
+  mutate(person = factor(person, levels = person_order))
+
+ggplot(person_scores, aes(month, quality, colour = person)) +
+  core_start_line +
+  geom_line(aes(group = person), linewidth = 0.7) +
+  # Hollow points for months before the person became core faculty
+  geom_point(aes(shape = faculty), size = 2.5, stroke = 1, fill = "white") +
+  scale_colour_manual(values = person_colors) +
+  scale_shape_manual(
+    values = c("Core" = 16, "Non-core" = 21),
+    labels = c("Core" = "As core faculty", "Non-core" = "Before becoming core"),
+    breaks = c("Core", "Non-core")
+  ) +
+  guides(
+    colour = guide_legend(order = 1),
+    shape = guide_legend(order = 2, override.aes = list(colour = "grey30"))
+  ) +
+  scale_x_date(
+    date_breaks = "1 month", date_labels = "%b %Y",
+    limits = month_range, expand = c(0, 0)
+  ) +
+  scale_y_continuous(limits = c(0, 100), expand = expansion(mult = c(0, 0.02))) +
+  labs(
+    title = "Average AI quality score per month – faculty who were ever core",
+    subtitle = glue(
+      "Rubric {rubric_id}; months with few evaluations are noisy"
+    ),
+    x = NULL, y = "Mean quality score (0–100)", colour = NULL, shape = NULL
+  ) +
+  plot_theme
+```
+
+```{r}
+# Monthly average for the ever-core group combined (incl. before they became
+# core) vs all other faculty
+group_scores <- ai_quality |>
+  inner_join(
+    formative_evals |> select(evaluation_id, evaluator_id, month),
+    by = "evaluation_id"
+  ) |>
+  mutate(
+    group = if_else(
+      evaluator_id %in% core_people$evaluator_id,
+      "Ever-core faculty", "All other faculty"
+    )
+  ) |>
+  group_by(month, group) |>
+  summarise(quality = mean(quality), n = n(), .groups = "drop")
+
+group_colors <- c("Ever-core faculty" = "#2a78d6", "All other faculty" = "#eb6834")
+
+ggplot(group_scores, aes(month, quality, colour = group)) +
+  core_start_line +
+  geom_line(linewidth = 0.7) +
+  geom_point(size = 2.5) +
+  scale_colour_manual(values = group_colors) +
+  scale_x_date(
+    date_breaks = "1 month", date_labels = "%b %Y",
+    limits = month_range, expand = c(0, 0)
+  ) +
+  scale_y_continuous(limits = c(0, 100), expand = expansion(mult = c(0, 0.02))) +
+  labs(
+    title = "Average AI quality score per month – ever-core vs all other faculty",
+    subtitle = glue("Rubric {rubric_id}; formative evaluations only"),
+    x = NULL, y = "Mean quality score (0–100)", colour = NULL
+  ) +
+  plot_theme
+
+HTML(glue("Data last modified {last_modified}"))
+```
+
+# Impact of the core faculty program
+
+The question is whether the quality of formative evaluations written by core
+faculty, as scored by the AI review (rubric `r rubric_id`), changed after the
+core faculty program started on January 1, 2025. A simple before/after
+comparison is not enough: the ever-core faculty already scored higher before the
+program, and scores for everyone may shift over time for unrelated reasons. Both
+analyses below therefore compare the **change** in scores of the ever-core
+faculty with the change in scores of all other faculty over the same period
+(evaluations are assigned to a period by rotation date).
+
+```{r}
+did_data <- ai_quality |>
+  inner_join(
+    formative_evals |> select(evaluation_id, evaluator_id, month),
+    by = "evaluation_id"
+  ) |>
+  inner_join(
+    tbl(conn, "evaluator") |>
+      select(evaluator_id = id, original_evaluator_id) |>
+      collect(),
+    by = "evaluator_id"
+  ) |>
+  mutate(
+    group = factor(
+      if_else(evaluator_id %in% core_people$evaluator_id, "Ever-core", "Other"),
+      levels = c("Other", "Ever-core")
+    ),
+    period = factor(
+      if_else(month >= core_start, "After", "Before"),
+      levels = c("Before", "After")
+    )
+  )
+
+did_data |>
+  group_by(group, period) |>
+  summarise(
+    Faculty = n_distinct(original_evaluator_id),
+    Evaluations = n(),
+    `Mean score` = round(mean(quality), 1),
+    .groups = "drop"
+  ) |>
+  rename(Group = group, Period = period) |>
+  kable(caption = "AI quality score (0–100) by group and period")
+
+# Ever-core faculty with evaluations both before and after the program start
+n_core_both <- did_data |>
+  filter(group == "Ever-core") |>
+  group_by(original_evaluator_id) |>
+  filter(n_distinct(period) == 2) |>
+  pull(original_evaluator_id) |>
+  n_distinct()
+```
+
+::: {.callout-warning}
+## Very low n: interpret with caution
+Only `r n_core_both` ever-core faculty members have evaluations both before and
+after the program started, so the change in the ever-core group rests on very
+few people and the statistical power of these tests is very low. With so little
+data a non-significant result says little about whether the program had an
+effect, and a significant result is likely to overestimate the size of the
+effect and can be driven by a single person. Treat the results below as
+exploratory.
+:::
+
+## Difference-in-differences model
+
+A linear mixed model of the AI quality score of each evaluation:
+
+`quality ~ group * period + (1 | evaluator)`
+
+- `group`: ever-core vs other faculty; captures the difference in level
+  between the groups before the program
+- `period`: before vs after January 1, 2025; captures the change over time
+  that applies to all faculty
+- `group × period` (the **difference-in-differences**): the additional change
+  in score for the ever-core faculty on top of the change seen for everyone
+  else. This is the estimate of the program's effect, in quality score points
+- `(1 | evaluator)`: a random intercept per faculty member, so that faculty with
+  many evaluations don't count as many independent observations and each person
+  is compared against their own typical score
+
+The model is fitted by REML with `lmerTest`, which gives p-values for each term
+using Satterthwaite's approximation of the degrees of freedom; confidence
+intervals are 95% Wald intervals.
+
+```{r}
+did_model <- lmerTest::lmer(
+  quality ~ group * period + (1 | original_evaluator_id),
+  data = did_data
+)
+did_coef <- summary(did_model)$coefficients
+did_ci <- confint(did_model, method = "Wald")[rownames(did_coef), ]
+
+data.frame(
+  Term = c(
+    "Intercept (other faculty, before)",
+    "Ever-core vs other (before)",
+    "After vs before (other faculty)",
+    "Difference-in-differences (ever-core × after)"
+  ),
+  Estimate = round(did_coef[, "Estimate"], 1),
+  `CI low` = round(did_ci[, 1], 1),
+  `CI high` = round(did_ci[, 2], 1),
+  df = round(did_coef[, "df"]),
+  p = format.pval(did_coef[, "Pr(>|t|)"], digits = 2, eps = 0.001),
+  check.names = FALSE
+) |>
+  kable(row.names = FALSE, caption = "Fixed effects (score points)")
+
+did_term <- "groupEver-core:periodAfter"
+did_est <- did_coef[did_term, "Estimate"]
+did_est_ci <- did_ci[did_term, ]
+did_p <- did_coef[did_term, "Pr(>|t|)"]
+```
+
+After the program started, the scores of ever-core faculty changed by
+**`r sprintf("%+.1f", did_est)` points** (95% CI
+`r sprintf("%.1f", did_est_ci[1])` to `r sprintf("%.1f", did_est_ci[2])`)
+relative to the change for all other faculty
+(p = `r format.pval(did_p, digits = 2, eps = 0.001)`).
+
+## Per-faculty change (Wilcoxon rank-sum test)
+
+A simpler check that makes no assumptions about the distribution of the scores.
+For each faculty member with evaluations both before and after January 1,
+2025, the change is their mean score after minus their mean score before. The
+changes of the ever-core faculty are then compared with those of all other
+faculty using a Wilcoxon rank-sum test, with each person counting once. The
+location shift is the Hodges-Lehmann estimate of the difference in change
+between the groups. Ever-core faculty without evaluations before the program
+can't contribute to this test.
+
+```{r}
+person_change <- did_data |>
+  group_by(original_evaluator_id, group) |>
+  summarise(
+    before = mean(quality[period == "Before"]),
+    after = mean(quality[period == "After"]),
+    .groups = "drop"
+  ) |>
+  filter(!is.na(before), !is.na(after)) |>
+  mutate(change = after - before)
+
+person_change |>
+  group_by(Group = group) |>
+  summarise(
+    Faculty = n(),
+    `Median before` = median(before),
+    `Median after` = median(after),
+    `Median change` = median(change)
+  ) |>
+  kable(digits = 1, caption = "Per-faculty mean AI quality score (0–100)")
+
+# group levels are Other, Ever-core, so the shift is Other - Ever-core; flip it
+wilcox_res <- wilcox.test(change ~ group, data = person_change, conf.int = TRUE)
+wilcox_shift <- -wilcox_res$estimate[[1]]
+wilcox_ci <- -rev(wilcox_res$conf.int)
+```
+
+The change in score for ever-core faculty differed from that of other faculty
+by **`r sprintf("%+.1f", wilcox_shift)` points** (95% CI
+`r sprintf("%.1f", wilcox_ci[1])` to `r sprintf("%.1f", wilcox_ci[2])`;
+Wilcoxon rank-sum p = `r format.pval(wilcox_res$p.value, digits = 2, eps = 0.001)`),
+based on `r sum(person_change$group == "Ever-core")` ever-core and
+`r sum(person_change$group == "Other")` other faculty.
+
+## Caveats
+
+- Ever-core faculty without evaluations before the program only add to the
+  group level, not to the estimated change
+- Core faculty were likely selected for being good evaluators, so the groups
+  are not comparable by design. The difference-in-differences accounts for
+  their higher starting level, but assumes both groups would have followed the
+  same trend without the program (the monthly chart above suggests both were
+  roughly flat before 2025)
+- Other differences between the groups (e.g. clerkship, academic title) are not
+  adjusted for
+- The outcome is the AI review score, so conclusions depend on how well it
+  agrees with human reviewers (see the AI–human concordance analysis)
+
+```{r}
+dbFinish(conn)
+```

@@ -125,6 +125,10 @@ here.
 - When developing shiny apps, don't test by starting a server (e.g. chromium). A
   human coder will do this unless specifically instructed. You can do checks for
   syntax (parsing) and small tests for functions.
+- The same goes for Quarto documents (e.g. in `./analysis`): don't run
+  `quarto render`, the user does the rendering. If needed, scratch test the
+  relevant code (e.g. a query or data wrangling step) in a temporary R script
+  instead.
 - The project uses `sqlife::dbGetConn()` to connect to databases which allows it
   to use that library's insert/update/delete functions. Note that a script
   calling this should always end with `sqlife::dbFinish(conn)` to ensure clean
