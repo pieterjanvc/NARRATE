@@ -14,6 +14,7 @@ library(sqlife)
 library(dplyr)
 library(htmltools)
 library(ggplot2)
+library(lubridate)
 pkgload::load_all(here::here(), quiet = TRUE)
 
 rubric_id <- 5
@@ -79,10 +80,17 @@ formative_evals <- tbl(conn, "evaluation") |>
     tbl(conn, "clerkship") |> select(clerkship_id = id, clerkship),
     by = "clerkship_id"
   ) |>
-  select(evaluation_id = id, evaluator_id, core_faculty, rotation_date, clerkship) |>
+  select(
+    evaluation_id = id,
+    evaluator_id,
+    core_faculty,
+    rotation_date,
+    clerkship
+  ) |>
   collect() |>
   mutate(
-    month = as.Date(paste0(substr(rotation_date, 1, 7), "-01")),
+    rotation_date = ymd(rotation_date),
+    month = floor_date(rotation_date, unit = "month"),
     faculty = factor(
       if_else(core_faculty %in% 1, "Core", "Non-core"),
       levels = c("Non-core", "Core")
@@ -111,12 +119,20 @@ plot_theme <- theme_minimal(base_size = 12) +
 core_start <- as.Date("2025-01-01")
 core_start_line <- list(
   geom_vline(
-    xintercept = core_start, linetype = "dashed",
-    linewidth = 0.4, colour = "grey50"
+    xintercept = core_start,
+    linetype = "dashed",
+    linewidth = 0.4,
+    colour = "grey50"
   ),
   annotate(
-    "text", x = core_start, y = 100, label = "Core faculty program starts",
-    hjust = -0.05, vjust = 1, size = 3.2, colour = "grey35"
+    "text",
+    x = core_start,
+    y = 100,
+    label = "Core faculty program starts",
+    hjust = -0.05,
+    vjust = 1,
+    size = 3.2,
+    colour = "grey35"
   )
 )
 
@@ -125,21 +141,30 @@ month_totals <- formative_by_month |> count(month, wt = n)
 ggplot(formative_by_month, aes(month, n)) +
   geom_col(
     aes(fill = faculty),
-    width = 25, colour = "white", linewidth = 0.4
+    width = 25,
+    colour = "white",
+    linewidth = 0.4
   ) +
   geom_text(
-    data = month_totals, aes(label = n),
-    vjust = -0.4, size = 3.5, colour = "grey20"
+    data = month_totals,
+    aes(label = n),
+    vjust = -0.4,
+    size = 3.5,
+    colour = "grey20"
   ) +
   scale_fill_manual(values = faculty_colors, breaks = c("Core", "Non-core")) +
   scale_x_date(
-    date_breaks = "1 month", date_labels = "%b %Y",
-    limits = month_range, expand = c(0, 0)
+    date_breaks = "1 month",
+    date_labels = "%b %Y",
+    limits = month_range,
+    expand = c(0, 0)
   ) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.08))) +
   labs(
     title = "Formative evaluations per month",
-    x = NULL, y = "Evaluations", fill = NULL
+    x = NULL,
+    y = "Evaluations",
+    fill = NULL
   ) +
   plot_theme
 ```
@@ -156,21 +181,30 @@ clerkship_colors <- c("Medicine" = "#6250d6", "Neurology" = "#1baf7a")
 ggplot(core_by_month, aes(month, n)) +
   geom_col(
     aes(fill = clerkship),
-    width = 25, colour = "white", linewidth = 0.4
+    width = 25,
+    colour = "white",
+    linewidth = 0.4
   ) +
   geom_text(
-    data = core_totals, aes(label = n),
-    vjust = -0.4, size = 3.5, colour = "grey20"
+    data = core_totals,
+    aes(label = n),
+    vjust = -0.4,
+    size = 3.5,
+    colour = "grey20"
   ) +
   scale_fill_manual(values = clerkship_colors) +
   scale_x_date(
-    date_breaks = "1 month", date_labels = "%b %Y",
-    limits = month_range, expand = c(0, 0)
+    date_breaks = "1 month",
+    date_labels = "%b %Y",
+    limits = month_range,
+    expand = c(0, 0)
   ) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
   labs(
     title = "Formative evaluations per month – core faculty only, by clerkship",
-    x = NULL, y = "Evaluations", fill = NULL
+    x = NULL,
+    y = "Evaluations",
+    fill = NULL
   ) +
   plot_theme
 ```
@@ -196,6 +230,13 @@ core_people <- tbl(conn, "evaluator") |>
     )
   ) |>
   ungroup()
+
+#  tbl(conn, "evaluator") |> collect() |> group_by(original_evaluator_id) |> filter(any(!is.na(core_faculty_start))) |> 
+#   summarise(core_faculty_start = min(core_faculty_start, na.rm = T), person = gsub(
+#       "(^|[ '-])([a-z])", "\\1\\U\\2",
+#       tolower(min(evaluator, na.rm = T)),
+#       perl = TRUE
+#     ), .groups = "drop")
 
 person_by_month <- formative_evals |>
   inner_join(core_people, by = "evaluator_id") |>
@@ -404,8 +445,8 @@ n_core_both <- did_data |>
 
 ::: {.callout-warning}
 ## Very low n: interpret with caution
-Only `r n_core_both` ever-core faculty members have evaluations both before and
-after the program started, so the change in the ever-core group rests on very
+Only `r n_core_both` ever-core faculty members have evaluations **both before and
+after** the program started, so the change in the ever-core group rests on very
 few people and the statistical power of these tests is very low. With so little
 data a non-significant result says little about whether the program had an
 effect, and a significant result is likely to overestimate the size of the
@@ -428,7 +469,8 @@ A linear mixed model of the AI quality score of each evaluation:
   else. This is the estimate of the program's effect, in quality score points
 - `(1 | evaluator)`: a random intercept per faculty member, so that faculty with
   many evaluations don't count as many independent observations and each person
-  is compared against their own typical score
+  is compared against their own typical score. This also accounts for the fact 
+  that some faculty members systematically give higher scores than others.
 
 The model is fitted by REML with `lmerTest`, which gives p-values for each term
 using Satterthwaite's approximation of the degrees of freedom; confidence
